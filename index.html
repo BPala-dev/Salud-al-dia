@@ -211,7 +211,7 @@ var SEED=[
   ing:"2 muslos de pollo sin piel\n300 g de calabaza\n1 diente de ajo\nRomero, sal y pimienta",
   steps:"Cortar la calabaza en cubos y ponerla en una fuente con el pollo.\nCondimentar con ajo, romero, sal y pimienta.\nHornear 40 minutos a 200 °C."}
 ];
-function defaults(){return{v:2,goal:2000,target:null,cal:{},recent:[],weights:[],recipes:JSON.parse(JSON.stringify(SEED))}}
+function defaults(){return{v:2,goal:2000,target:null,cal:{},recent:[],local:{},weights:[],recipes:JSON.parse(JSON.stringify(SEED))}}
 var S=defaults();
 var now=new Date();
 function pad(n){return n<10?"0"+n:""+n}
@@ -288,9 +288,16 @@ function searchProducts(q){
   });
 }
 function productByCode(code){
-  return getJSON(OFF+"/api/v2/product/"+encodeURIComponent(code)+".json?fields="+FIELDS).then(function(j){
-    return j&&j.status===1&&j.product?normalize(j.product,code):null;
-  });
+  var tries=[code];
+  if(code.length===12)tries.push("0"+code);
+  if(code.length===13&&code.charAt(0)==="0")tries.push(code.slice(1));
+  function go(k){
+    if(k>=tries.length)return Promise.resolve(null);
+    return fetch(OFF+"/api/v2/product/"+encodeURIComponent(tries[k])+".json?fields="+FIELDS).then(function(r){
+      return r.json().catch(function(){return{status:0}});
+    }).then(function(j){return j&&j.status===1&&j.product?normalize(j.product,tries[k]):go(k+1)});
+  }
+  return go(0);
 }
 
 /* ---------- gráficos ---------- */
@@ -446,7 +453,7 @@ function resultRows(list){
 }
 function resultsHtml(){
   if(A.loading)return'<div class="empty">Buscando…</div>';
-  if(A.error)return'<div class="empty"><b>No se pudo completar</b>'+esc(A.error)+"</div>";
+  if(A.error)return'<div class="empty"><b>'+(A.notFoundCode?"Código no encontrado":"No se pudo completar")+'</b>'+esc(A.error)+(A.notFoundCode?'<br><button class="btn sec small" style="margin-top:12px" data-a="manualcode">Cargar a mano con este código</button>':"")+"</div>";
   if(A.list&&A.searched){
     return A.list.length?'<h2 style="margin-top:4px">Resultados</h2>'+resultRows(A.list):'<div class="empty"><b>Sin resultados</b>Probá con otra palabra o cargalo a mano.</div>';
   }
@@ -466,17 +473,18 @@ function updateResults(){var r=$("#a-res");if(r)r.innerHTML=resultsHtml()}
 function doSearch(){
   var q=($("#a-q")?$("#a-q").value:A.q).trim();A.q=q;if(!q){toast("Escribí un nombre o un código");return}
   if(/^\d{8,14}$/.test(q))return lookup(q);
-  var tk=++searchToken;A.loading=true;A.error=null;A.searched=true;updateResults();
+  var tk=++searchToken;A.loading=true;A.error=null;A.notFoundCode=null;A.searched=true;updateResults();
   searchProducts(q).then(function(list){if(tk!==searchToken||!A)return;A.list=list;A.loading=false;updateResults()},
     function(){if(tk!==searchToken||!A)return;A.loading=false;A.error="No pudimos conectar con Open Food Facts. Revisá tu conexión e intentá de nuevo.";updateResults()});
 }
 function lookup(code){
   if(!A||A.mode!=="search"){A=A&&A.mode==="detail"?{mode:"search",q:"",list:null,loading:false,error:null,searched:false,drawn:true}:A}
-  var tk=++searchToken;A.q=code;A.loading=true;A.error=null;A.searched=true;
+  var tk=++searchToken;A.q=code;A.loading=true;A.error=null;A.notFoundCode=null;A.searched=true;
+  if(S.local&&S.local[code]){A.loading=false;toast("Producto que guardaste antes");openDetail(Object.assign({},S.local[code]));return}
   if($("#a-q")){$("#a-q").value=code;updateResults()}
   productByCode(code).then(function(it){
     if(tk!==searchToken||!A)return;A.loading=false;
-    if(!it){A.error="No encontramos el código "+code+" en Open Food Facts. Probá por nombre o cargalo a mano.";updateResults();return}
+    if(!it){A.notFoundCode=code;A.error="No encontramos el código "+code+" en Open Food Facts. Probá buscarlo por nombre o cargalo a mano: la próxima vez que lo escanees va a aparecer solo.";updateResults();return}
     if(it.kcal==null){toast("Ese producto no tiene calorías cargadas. Ingresalas vos.");openDetail({custom:true,name:it.name,brand:it.brand,code:it.code,img:it.img,kcal:"",serving:""});return}
     openDetail(it);
   },function(){if(tk!==searchToken||!A)return;A.loading=false;A.error="No pudimos conectar con Open Food Facts. Revisá tu conexión e intentá de nuevo.";updateResults()});
@@ -488,7 +496,7 @@ function openDetail(it,opts){
 function drawDetail(){
   var it=A.item,custom=!!it.custom;
   $("#layer").innerHTML='<div class="scrim still" data-a="scrim"><div class="sheet" role="dialog" aria-modal="true" aria-label="Detalle del alimento"><div class="sh"><button class="link" data-a="'+(A.editId?"close":"toresults")+'">← '+(A.editId?"Cerrar":"Volver")+'</button><button class="ib" data-a="close" aria-label="Cerrar">'+ic("x")+"</button></div>"+
-   (custom?'<div><label class="l" for="d_name">Nombre del alimento</label><input id="d_name" class="field" maxlength="60" value="'+esc(it.name)+'"></div>':
+   (custom?'<div><label class="l" for="d_name">Nombre del alimento</label><input id="d_name" class="field" maxlength="60" value="'+esc(it.name)+'"></div>'+(it.code?'<p class="sub" style="margin:0">Código de barras: '+esc(it.code)+'. Lo guardamos para que aparezca solo la próxima vez que lo escanees.</p>':""):
      '<div><h3 class="t">'+esc(it.name)+'</h3><div class="sub">'+(it.brand?esc(it.brand):"")+(it.brand&&it.serving?" · ":"")+(it.serving?"Porción: "+esc(it.serving):"")+"</div></div>")+
    '<div class="card" style="padding:8px 16px"><div class="amt"><input id="d_kcal" inputmode="decimal" placeholder="0" aria-label="Calorías por porción" value="'+(it.kcal===""||it.kcal==null?"":esc(String(it.kcal).replace(".",",")))+'"><span>kcal por porción</span></div>'+
    (custom?'<div style="padding-bottom:10px"><label class="l" for="d_serv_txt">Tamaño de la porción (opcional)</label><input id="d_serv_txt" class="field" maxlength="40" placeholder="Ej: 1 unidad, 30 g" value="'+esc(it.serving||"")+'"></div>':"")+"</div>"+
@@ -520,6 +528,7 @@ function addFood(){
   (S.cal[date]=S.cal[date]||[]).push(rec);
   var ri={code:it.code||"",name:name,brand:it.brand||"",img:it.img||"",kcal:rec.kcal,k100:it.k100==null?null:it.k100,serving:rec.serving||(it.basis==="100g"?"100 g":""),basis:it.basis||(it.custom?"serving":null)};
   S.recent=[ri].concat(S.recent.filter(function(x){return!(ri.code&&x.code===ri.code)&&x.name!==ri.name})).slice(0,12);
+  if(it.custom&&it.code){S.local=S.local||{};S.local[it.code]={code:it.code,name:name,brand:it.brand||"",img:"",kcal:rec.kcal,k100:null,serving:rec.serving,basis:"serving"}}
   V.day=date;V.tab="cal";persist();var edit=!!A.editId;closeSheet();render(true);window.scrollTo(0,0);toast(edit?"Cambios guardados":"Alimento agregado");
 }
 function findEntry(id){var r=null;Object.keys(S.cal).forEach(function(d){S.cal[d].forEach(function(e){if(e.id===id)r={e:e,d:d}})});return r}
@@ -534,31 +543,60 @@ function stopScan(){
   if(scan.stream){scan.stream.getTracks().forEach(function(t){t.stop()});scan.stream=null}
 }
 function scanMsg(t){var m=$("#scanmsg");if(m)m.textContent=t}
+function validEAN(c){
+  if(!/^\d+$/.test(c)||[8,12,13].indexOf(c.length)<0)return false;
+  var d=c.split("").map(Number),chk=d.pop(),sum=0,w=3;
+  for(var k=d.length-1;k>=0;k--){sum+=d[k]*w;w=w===3?1:3}
+  return(10-sum%10)%10===chk;
+}
+var lastRead={code:"",n:0};
+function makeHints(){
+  var h=new Map();
+  h.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.UPC_A]);
+  h.set(ZXing.DecodeHintType.TRY_HARDER,true);return h;
+}
+function candidate(raw){
+  if(scan.done)return;
+  var code=String(raw).replace(/\D/g,"");
+  if(!validEAN(code)){scanMsg("Leyendo… acercá o alejá un poco el código y mantené firme el celu.");return}
+  if(lastRead.code===code)lastRead.n++;else{lastRead.code=code;lastRead.n=1}
+  scanMsg("Código "+code+"…");
+  if(lastRead.n>=2)onCode(code);
+}
 function startScan(){
-  scan.done=false;
-  $("#scanlayer").innerHTML='<div class="scan" role="dialog" aria-modal="true" aria-label="Escanear código de barras"><div class="top"><b>Escanear código</b><button class="ib" data-a="scanclose" aria-label="Cerrar cámara">'+ic("x")+'</button></div><div class="view"><video id="scanvideo" playsinline muted autoplay></video><div class="frame"></div></div><div class="msg"><p id="scanmsg">Abriendo la cámara…</p><div class="searchrow"><input id="scan-code" class="field" inputmode="numeric" placeholder="O escribí el código" aria-label="Código de barras"><button class="btn small" data-a="scancode">Buscar</button></div></div></div>';
+  scan.done=false;lastRead={code:"",n:0};
+  $("#scanlayer").innerHTML='<div class="scan" role="dialog" aria-modal="true" aria-label="Escanear código de barras"><div class="top"><b>Escanear código</b><button class="ib" data-a="scanclose" aria-label="Cerrar cámara">'+ic("x")+'</button></div><div class="view"><video id="scanvideo" playsinline muted autoplay></video><div class="frame"></div></div><div class="msg"><p id="scanmsg">Abriendo la cámara…</p><button class="btn sec small" data-a="scanphoto">Sacar una foto del código</button><input id="scan-photo" type="file" accept="image/*" capture="environment" hidden><div class="searchrow"><input id="scan-code" class="field" inputmode="numeric" placeholder="O escribí el código" aria-label="Código de barras"><button class="btn small" data-a="scancode">Buscar</button></div></div></div>';
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){scanMsg("Este navegador no permite usar la cámara. Escribí el código a mano.");return}
-  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"}},audio:false}).then(function(stream){
+  navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:"environment"},width:{ideal:1920},height:{ideal:1080}},audio:false}).then(function(stream){
     if(scan.done){stream.getTracks().forEach(function(t){t.stop()});return}
     scan.stream=stream;var v=$("#scanvideo");v.srcObject=stream;v.play().catch(function(){});
-    scanMsg("Apuntá al código de barras del producto.");
+    try{var tr=stream.getVideoTracks()[0],caps=tr.getCapabilities?tr.getCapabilities():{};
+      if(caps.focusMode&&caps.focusMode.indexOf("continuous")>-1)tr.applyConstraints({advanced:[{focusMode:"continuous"}]}).catch(function(){})}catch(x){}
+    scanMsg("Apuntá al código de barras, de frente y con buena luz.");
     if("BarcodeDetector" in window){
-      var det=new BarcodeDetector({formats:["ean_13","ean_8","upc_a","upc_e"]});
-      scan.timer=setInterval(function(){if(v.readyState<2)return;det.detect(v).then(function(r){if(r&&r.length)onCode(r[0].rawValue)}).catch(function(){})},300);
+      var det=new BarcodeDetector({formats:["ean_13","ean_8","upc_a"]});
+      scan.timer=setInterval(function(){if(v.readyState<2)return;det.detect(v).then(function(r){if(r&&r.length)candidate(r[0].rawValue)}).catch(function(){})},250);
     }else{
       loadZX().then(function(){
         if(scan.done)return;
-        var hints=new Map();
-        hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.UPC_A,ZXing.BarcodeFormat.UPC_E]);
-        hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
-        var rd=new ZXing.BrowserMultiFormatReader(hints,250);scan.reader=rd;
-        rd.decodeFromStream(stream,v,function(res){if(res)onCode(res.getText())});
-      },function(){scanMsg("No se pudo cargar el lector. Escribí el código a mano.")});
+        var rd=new ZXing.BrowserMultiFormatReader(makeHints(),200);scan.reader=rd;
+        rd.decodeFromStream(stream,v,function(res){if(res)candidate(res.getText())});
+      },function(){scanMsg("No se pudo cargar el lector. Sacá una foto del código o escribilo a mano.")});
     }
   },function(){scanMsg("No pudimos abrir la cámara. Revisá el permiso de cámara del navegador o escribí el código a mano.")});
 }
+function decodePhoto(file){
+  scanMsg("Leyendo la foto…");
+  loadZX().then(function(){
+    var rd=new ZXing.BrowserMultiFormatReader(makeHints()),url=URL.createObjectURL(file);
+    return rd.decodeFromImageUrl(url).then(function(res){
+      URL.revokeObjectURL(url);var c=String(res.getText()).replace(/\D/g,"");
+      if(validEAN(c))onCode(c);else scanMsg("Leí «"+c+"» pero no es un código válido. Probá de nuevo con la foto más cerca y nítida.");
+    },function(){URL.revokeObjectURL(url);scanMsg("No se pudo leer el código en la foto. Probá con más luz, de frente y sin reflejos.")});
+  },function(){scanMsg("No se pudo cargar el lector. Escribí el código a mano.")});
+}
 function onCode(code){
-  if(scan.done)return;
+  if(scan.done&&!$("#scanlayer").innerHTML)return;
   stopScan();$("#scanlayer").innerHTML="";toast("Código leído: "+code);
   if(A)lookup(String(code));
 }
@@ -608,6 +646,8 @@ document.addEventListener("click",function(e){
       Object.keys(S.cal).forEach(function(d){S.cal[d]=S.cal[d].filter(function(x){return x.id!==A.editId});if(!S.cal[d].length)delete S.cal[d]});
       persist();closeSheet();render(true);toast("Alimento eliminado");break;
     case"scan":startScan();break;
+    case"scanphoto":{var pi=$("#scan-photo");if(pi)pi.click();break}
+    case"manualcode":openDetail({custom:true,name:"",brand:"",code:(A&&A.notFoundCode)||"",kcal:"",serving:""});break;
     case"scanclose":stopScan();$("#scanlayer").innerHTML="";break;
     case"scancode":{var c=($("#scan-code").value||"").trim();if(!/^\d{8,14}$/.test(c)){toast("El código tiene entre 8 y 14 números");break}onCode(c);break}
     case"editW":openW(el.dataset.d);break;
@@ -653,6 +693,7 @@ document.addEventListener("keydown",function(e){
 document.addEventListener("change",function(e){
   var t=e.target;
   if(t.id==="w_date"&&W){readW();var ex=S.weights.filter(function(x){return x.d===W.date})[0];if(ex)W.amount=String(ex.kg).replace(".",",");W.confirm=false;drawW()}
+  if(t.id==="scan-photo"&&t.files&&t.files[0]){decodePhoto(t.files[0]);t.value=""}
   if(t.id==="s-goal"){var g=parseInt(String(t.value).replace(/\./g,""),10);if(g>=500&&g<=10000){S.goal=g;persist();toast("Meta actualizada")}else{t.value=S.goal;toast("Ingresá una meta entre 500 y 10.000 kcal")}}
   if(t.id==="s-target"){var v=num(t.value);S.target=v!=null&&v>=20&&v<=400?Math.round(v*10)/10:null;persist();toast(S.target?"Objetivo guardado":"Objetivo quitado")}
   if(t.id==="imp"&&t.files&&t.files[0]){

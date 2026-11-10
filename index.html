@@ -219,7 +219,7 @@ var SEED=[
   ing:"2 muslos de pollo sin piel\n300 g de calabaza\n1 diente de ajo\nRomero, sal y pimienta",
   steps:"Cortar la calabaza en cubos y ponerla en una fuente con el pollo.\nCondimentar con ajo, romero, sal y pimienta.\nHornear 40 minutos a 200 °C."}
 ];
-function defaults(){return{v:2,goal:2000,target:null,plan:{sex:"",age:"",height:"",start:"",date:"",act:"1.375"},cal:{},recent:[],local:{},weights:[],recipes:JSON.parse(JSON.stringify(SEED))}}
+function defaults(){return{v:2,goal:2000,target:null,plan:{sex:"",age:"",height:"",start:"",date:"",act:"1.375",obj:"",otro:""},cal:{},recent:[],local:{},weights:[],recipes:JSON.parse(JSON.stringify(SEED))}}
 var S=defaults();
 var now=new Date();
 function pad(n){return n<10?"0"+n:""+n}
@@ -262,6 +262,27 @@ function loadLocal(){try{var r=localStorage.getItem(LS);if(r)return JSON.parse(r
 function persist(){try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){toast("No se pudo guardar en este navegador")}}
 function merge(src){var d=defaults();for(var k in src)d[k]=src[k];d.plan=Object.assign({},defaults().plan,src.plan||{});return d}
 
+/* ---------- macros ---------- */
+function mtot(e){if(e.p==null&&e.c==null&&e.f==null)return null;return{p:(e.p||0)*e.servings,c:(e.c||0)*e.servings,f:(e.f||0)*e.servings}}
+function dayMacros(k){var r={p:0,c:0,f:0,n:0,miss:0};entries(k).forEach(function(e){var m=mtot(e);if(m){r.p+=m.p;r.c+=m.c;r.f+=m.f;r.n++}else r.miss++});return r}
+var OBJ=[["grasa","Bajar grasa"],["musculo","Ganar músculo"],["ambas","Ambas"],["mantener","Mantener"],["otro","Otro"]];
+function objLabel(o){var r=OBJ.filter(function(x){return x[0]===o})[0];return r?r[1]:""}
+function macroTargets(kcal){
+  kcal=kcal||S.goal;var p=S.plan,last=S.weights[S.weights.length-1],w=(last&&last.kg)||num(p.start)||null,o=p.obj||"";
+  if(!w)return{p:Math.round(kcal*0.25/4),c:Math.round(kcal*0.45/4),f:Math.round(kcal*0.30/9),approx:true,kcal:kcal};
+  var gk={grasa:2.0,musculo:1.8,ambas:2.0,mantener:1.4,otro:1.4}[o]||1.4,fk={grasa:0.8,ambas:0.8,musculo:1.0}[o]||0.9;
+  var pr=Math.round(gk*w);if(pr*4>kcal*0.4)pr=Math.round(kcal*0.4/4);
+  var fat=Math.max(Math.round(fk*w),Math.round(kcal*0.2/9));if(pr*4+fat*9>kcal*0.9)fat=Math.max(Math.round(kcal*0.2/9),Math.round((kcal*0.9-pr*4)/9));
+  var c=Math.max(0,Math.round((kcal-pr*4-fat*9)/4));
+  return{p:pr,c:c,f:fat,kcal:kcal,w:w};
+}
+function macroCard(k){
+  var m=dayMacros(k),T=macroTargets();
+  function row(lbl,v,tg,col){var pc=tg>0?Math.min(v/tg,1):0;return'<div><div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-weight:600">'+lbl+'</span><span class="num"><b>'+fmt(v)+'</b> <span style="color:var(--mute)">/ '+fmt(tg)+" g</span></span></div>"+'<div class="bar" style="margin-top:6px"><i style="width:'+(pc*100)+'%;background:'+col+'"></i></div></div>'}
+  return'<section><h2>Macros</h2><div class="card" style="padding:14px 16px;display:flex;flex-direction:column;gap:12px">'+row("Proteínas",m.p,T.p,"var(--in)")+row("Carbohidratos",m.c,T.c,"var(--accent)")+row("Grasas",m.f,T.f,"var(--warn)")+
+   '<p class="sub" style="margin:0">'+(S.plan.obj?"Objetivo: "+esc(objLabel(S.plan.obj))+". ":"")+(T.approx?"Cargá tu peso para afinar estos objetivos. ":"")+"Objetivos orientativos según tu meta de "+fmt(S.goal)+" kcal"+(m.miss?". "+m.miss+(m.miss===1?" alimento no tiene":" alimentos no tienen")+" datos de macros.":".")+"</p></div></section>";
+}
+
 /* ---------- cálculos ---------- */
 function entries(k){return S.cal[k]||[]}
 function etotal(e){return Math.round(e.kcal*e.servings)}
@@ -272,33 +293,33 @@ function towardTarget(cur,prev){if(!S.target||prev==null)return null;return Math
 
 /* ---------- alimentos comunes: calorías cada 100 g (valores aproximados) ---------- */
 var FOODS=[
- ["Pollo, pechuga sin piel (cruda)",120,"ave"],["Pollo, pechuga sin piel (cocida)",165,"ave plancha hervida"],["Pollo, muslo sin piel (cocido)",175,"ave pata muslo"],["Pollo, muslo con piel (cocido)",230,"ave pata muslo horno"],["Pollo, alitas (fritas)",300,"ave"],["Pavo, pechuga (cocida)",140,"ave"],
- ["Carne vacuna magra: nalga, peceto, cuadril (cocida)",180,"vaca res bife"],["Bife de lomo (cocido)",190,"vaca res"],["Bife de chorizo (cocido)",250,"vaca res"],["Asado de tira (cocido)",330,"vaca parrilla costilla"],["Vacío (cocido)",250,"vaca parrilla"],
- ["Carne picada común (cruda)",215,"vaca molida"],["Carne picada común (cocida)",260,"vaca molida"],["Carne picada especial o magra (cruda)",140,"vaca molida"],["Carne picada especial o magra (cocida)",180,"vaca molida"],["Hamburguesa casera de carne (cocida)",260,"vaca"],
- ["Milanesa de carne (frita)",280,"vaca"],["Milanesa de carne (al horno)",200,"vaca"],["Milanesa de pollo (frita)",250,""],["Milanesa de pollo (al horno)",190,""],
- ["Cerdo, bondiola (cocida)",260,""],["Cerdo, lomo (cocido)",190,""],["Cerdo, chuleta (cocida)",230,"costeleta"],["Hígado vacuno (cocido)",190,"higado"],
- ["Jamón cocido",115,"fiambre"],["Jamón crudo",240,"fiambre"],["Salame",400,"fiambre"],["Mortadela",310,"fiambre"],["Panceta ahumada (cocida)",540,"bacon"],["Chorizo (cocido)",320,"parrilla choripan"],["Morcilla",380,"parrilla"],["Salchicha tipo Viena",290,"pancho hot dog"],
- ["Merluza (cruda)",80,"pescado"],["Merluza (cocida)",105,"pescado hervida horno plancha"],["Salmón (cocido)",205,"salmon pescado"],["Salmón ahumado",170,"salmon pescado"],["Atún al natural (lata, escurrido)",115,"atun pescado conserva"],["Atún en aceite (lata, escurrido)",190,"atun pescado conserva"],["Sardinas en aceite (lata)",210,"pescado conserva"],["Langostinos o camarones (cocidos)",100,"mariscos"],["Rabas (calamar rebozado frito)",175,"calamar anillas"],
- ["Huevo entero (cocido duro)",155,"huevos"],["Huevo frito",195,"huevos"],["Huevos revueltos",150,""],["Clara de huevo",52,"huevo"],["Yema de huevo",320,"huevo"],
- ["Leche entera",61,""],["Leche parcialmente descremada",46,""],["Leche descremada",34,""],["Yogur natural entero",61,""],["Yogur natural descremado",45,""],["Yogur saborizado o con frutas",95,""],
- ["Queso cremoso",290,""],["Queso port salut",320,""],["Queso mozzarella",280,"muzzarella"],["Queso cuartirolo",250,""],["Queso provolone",350,""],["Queso reggianito o sardo",390,""],["Queso parmesano rallado",430,""],["Queso untable (tipo Casancrem)",250,"crema"],["Ricota entera",170,"ricotta"],["Ricota light",110,"ricotta"],
- ["Manteca",720,"mantequilla"],["Crema de leche",340,""],["Dulce de leche",320,"ddl"],["Leche condensada",320,""],
- ["Arroz blanco (cocido)",130,""],["Arroz blanco (crudo)",360,""],["Arroz integral (cocido)",115,""],["Fideos o pasta (cocidos)",158,"tallarines espaguetis macarrones"],["Fideos o pasta (secos, crudos)",360,"tallarines espaguetis macarrones"],["Ñoquis de papa (cocidos)",140,"noquis"],["Polenta (cocida)",70,""],
- ["Avena arrollada (cruda)",380,"copos"],["Avena (cocida con agua)",70,""],["Copos de maíz (cereal)",360,"cereal desayuno"],
- ["Pan francés",270,"flauta felipe miñon"],["Pan lactal blanco",265,"sandwich"],["Pan lactal integral",250,""],["Galletitas de agua",420,"crackers"],["Medialuna",400,"factura croissant"],["Harina de trigo",365,"000"],["Pan rallado",395,""],
- ["Pizza de muzzarella",270,""],["Empanada de carne (al horno)",250,""],["Empanada de carne (frita)",300,""],
- ["Lentejas (cocidas)",116,""],["Garbanzos (cocidos)",165,""],["Porotos (cocidos)",135,"frijoles alubias"],["Arvejas (cocidas)",84,"guisantes"],["Hummus",170,""],
- ["Zanahoria (cruda)",41,""],["Zanahoria (cocida)",35,""],["Tomate (crudo)",18,""],["Lechuga",15,""],["Espinaca (cruda)",23,""],["Espinaca (cocida)",23,""],["Acelga (cocida)",20,""],["Brócoli (cocido)",35,"brocoli"],["Coliflor (cocida)",23,""],["Zapallito (crudo)",17,"zucchini calabacin"],["Zapallo anco o calabaza (cocido)",40,""],
- ["Papa (cruda)",77,"patata"],["Papa (hervida)",87,"patata"],["Papas fritas (caseras)",312,"patatas"],["Papas fritas de bolsa (snack)",536,"patatas"],["Puré de papa (con leche y manteca)",110,"pure"],["Batata (cocida)",90,"camote boniato"],
- ["Cebolla (cruda)",40,""],["Morrón o pimiento (crudo)",28,"morron"],["Pepino",15,""],["Remolacha (cocida)",44,"betabel"],["Berenjena (cocida)",35,""],["Choclo (cocido)",96,"maiz"],["Champiñones (crudos)",22,"champinones hongos"],["Apio",14,""],["Repollo",25,""],["Ajo",149,""],["Aceitunas verdes",145,""],["Aceitunas negras",115,""],["Rúcula",25,"rucula"],["Puerro",61,""],["Espárragos (cocidos)",22,"esparragos"],["Chauchas (cocidas)",35,"ejotes judias verdes"],["Palta",160,"aguacate"],["Rabanito",16,""],["Hinojo",31,""],
- ["Manzana",52,""],["Banana",89,"platano"],["Naranja",47,""],["Mandarina",53,""],["Pera",57,""],["Durazno",39,"melocoton"],["Ciruela",46,""],["Uvas",69,"uva"],["Frutillas",32,"fresas frutilla"],["Sandía",30,"sandia"],["Melón",34,"melon"],["Ananá",50,"anana piña"],["Kiwi",61,""],["Limón",29,"limon"],["Pomelo",42,""],["Cerezas",63,"cereza"],["Arándanos",57,"arandanos"],["Mango",60,""],["Higos frescos",74,"higo"],["Damasco",48,"albaricoque"],["Papaya",43,"mamon"],["Granada",83,""],
- ["Pasas de uva",300,""],["Ciruelas pasas",240,""],["Dátiles",280,"datiles"],["Orejones de damasco",241,""],
- ["Almendras",579,"frutos secos"],["Nueces",654,"frutos secos"],["Maní (crudo)",567,"mani cacahuate frutos secos"],["Castañas de cajú",553,"castanas caju frutos secos"],["Avellanas",628,"frutos secos"],["Pistachos",560,"frutos secos"],["Semillas de chía",486,"chia"],["Semillas de girasol",584,""],["Semillas de lino",534,"linaza"],["Pasta de maní",590,"mani manteca de mani"],
- ["Aceite (girasol, oliva o maíz)",884,"oliva girasol"],["Mayonesa",680,""],["Azúcar",387,"azucar"],["Miel",305,""],["Mermelada",250,""],["Dulce de batata o membrillo",270,""],["Chocolate con leche",535,""],["Chocolate amargo",600,""],
- ["Gelatina (sabor frutal, preparada con azúcar)",62,"postre jello"],["Gelatina light (sin azúcar, preparada)",6,"postre jello dietetica"],["Flan casero (con caramelo)",140,"postre"],["Pastafrola (de membrillo o batata)",315,"postre pasta frola"],["Arroz con leche",130,"postre"],["Helado de crema",210,"postre"],["Torta de chocolate (con relleno)",370,"postre"],["Bizcochuelo de vainilla",300,"postre bizcocho"],["Brownie",466,"postre"],["Panqueque (sin relleno)",190,"postre crepe"],["Tarta de manzana",237,"postre"],
- ["Gaseosa cola",42,"coca refresco"],["Gaseosa light o cero",0,"refresco"],["Jugo de naranja (natural)",45,""],["Cerveza",43,""],["Vino tinto",85,""],["Café (sin azúcar)",2,"cafe"],["Té o mate cebado (sin azúcar)",1,"te"],
- ["Salsa de tomate",50,""],["Ketchup",100,""],["Mostaza",66,""]
-].map(function(f){return{name:f[0],k:f[1],n:nrm(f[0]+" "+f[2])}});
+ ["Pollo, pechuga sin piel (cruda)",120,22.5,0,2.6,"ave"],["Pollo, pechuga sin piel (cocida)",165,31,0,3.6,"ave plancha hervida"],["Pollo, muslo sin piel (cocido)",175,25,0,8,"ave pata muslo"],["Pollo, muslo con piel (cocido)",230,24,0,14,"ave pata muslo horno"],["Pollo, alitas (fritas)",300,27,2,21,"ave"],["Pavo, pechuga (cocida)",140,30,0,1.5,"ave"],
+ ["Carne vacuna magra: nalga, peceto, cuadril (cocida)",180,29,0,7,"vaca res bife"],["Bife de lomo (cocido)",190,28,0,8,"vaca res"],["Bife de chorizo (cocido)",250,27,0,15,"vaca res"],["Asado de tira (cocido)",330,24,0,26,"vaca parrilla costilla"],["Vacío (cocido)",250,26,0,16,"vaca parrilla"],
+ ["Carne picada común (cruda)",215,17,0,16,"vaca molida"],["Carne picada común (cocida)",260,26,0,17,"vaca molida"],["Carne picada especial o magra (cruda)",140,20,0,6,"vaca molida"],["Carne picada especial o magra (cocida)",180,27,0,7,"vaca molida"],["Hamburguesa casera de carne (cocida)",260,24,2,17,"vaca"],
+ ["Milanesa de carne (frita)",280,22,15,15,"vaca"],["Milanesa de carne (al horno)",200,24,12,6,"vaca"],["Milanesa de pollo (frita)",250,20,14,13,""],["Milanesa de pollo (al horno)",190,23,12,5,""],
+ ["Cerdo, bondiola (cocida)",260,25,0,18,""],["Cerdo, lomo (cocido)",190,29,0,8,""],["Cerdo, chuleta (cocida)",230,26,0,14,"costeleta"],["Hígado vacuno (cocido)",190,29,4,6,"higado"],
+ ["Jamón cocido",115,18,1,4,"fiambre"],["Jamón crudo",240,26,0,15,"fiambre"],["Salame",400,22,2,34,"fiambre"],["Mortadela",310,12,3,27,"fiambre"],["Panceta ahumada (cocida)",540,35,1,43,"bacon"],["Chorizo (cocido)",320,20,2,26,"parrilla choripan"],["Morcilla",380,15,5,34,"parrilla"],["Salchicha tipo Viena",290,11,3,26,"pancho hot dog"],
+ ["Merluza (cruda)",80,17,0,1,"pescado"],["Merluza (cocida)",105,22,0,1.5,"pescado hervida horno plancha"],["Salmón (cocido)",205,25,0,12,"salmon pescado"],["Salmón ahumado",170,21,0,9,"salmon pescado"],["Atún al natural (lata, escurrido)",115,26,0,1,"atun pescado conserva"],["Atún en aceite (lata, escurrido)",190,27,0,8.5,"atun pescado conserva"],["Sardinas en aceite (lata)",210,25,0,11.5,"pescado conserva"],["Langostinos o camarones (cocidos)",100,21,0,1.5,"mariscos"],["Rabas (calamar rebozado frito)",175,12,11,9.5,"calamar anillas"],
+ ["Huevo entero (cocido duro)",155,13,1,11,"huevos"],["Huevo frito",195,14,1,15,"huevos"],["Huevos revueltos",150,10,2,11,""],["Clara de huevo",52,11,0.7,0.2,"huevo"],["Yema de huevo",320,16,3.6,27,"huevo"],
+ ["Leche entera",61,3.2,4.8,3.3,""],["Leche parcialmente descremada",46,3.3,4.8,1.6,""],["Leche descremada",34,3.4,5,0.1,""],["Yogur natural entero",61,3.5,4.7,3.3,""],["Yogur natural descremado",45,4.3,6,0.4,""],["Yogur saborizado o con frutas",95,3.2,15,2.4,""],
+ ["Queso cremoso",290,18,2,23,""],["Queso port salut",320,22,1,25,""],["Queso mozzarella",280,22,2,20,"muzzarella"],["Queso cuartirolo",250,18,2,19,""],["Queso provolone",350,25,2,27,""],["Queso reggianito o sardo",390,35,2,26,""],["Queso parmesano rallado",430,38,4,29,""],["Queso untable (tipo Casancrem)",250,6,4,23,"crema"],["Ricota entera",170,11,3,13,"ricotta"],["Ricota light",110,11,4,5,"ricotta"],
+ ["Manteca",720,0.5,0.1,81,"mantequilla"],["Crema de leche",340,2,3,35,""],["Dulce de leche",320,6,55,7.5,"ddl"],["Leche condensada",320,8,55,8.5,""],
+ ["Arroz blanco (cocido)",130,2.7,28,0.3,""],["Arroz blanco (crudo)",360,7,79,0.6,""],["Arroz integral (cocido)",115,2.6,24,1,""],["Fideos o pasta (cocidos)",158,5.8,31,0.9,"tallarines espaguetis macarrones"],["Fideos o pasta (secos, crudos)",360,12.5,73,1.5,"tallarines espaguetis macarrones"],["Ñoquis de papa (cocidos)",140,3.5,30,0.5,"noquis"],["Polenta (cocida)",70,1.6,15,0.4,""],
+ ["Avena arrollada (cruda)",380,13,67,7,"copos"],["Avena (cocida con agua)",70,2.5,12,1.5,""],["Copos de maíz (cereal)",360,7,84,0.5,"cereal desayuno"],
+ ["Pan francés",270,9,55,1.5,"flauta felipe miñon"],["Pan lactal blanco",265,8,49,3.5,"sandwich"],["Pan lactal integral",250,10,43,4,""],["Galletitas de agua",420,10,72,10,"crackers"],["Medialuna",400,8,45,21,"factura croissant"],["Harina de trigo",365,10,76,1,"000"],["Pan rallado",395,13,72,5,""],
+ ["Pizza de muzzarella",270,12,33,10,""],["Empanada de carne (al horno)",250,10,25,12,""],["Empanada de carne (frita)",300,9,26,18,""],
+ ["Lentejas (cocidas)",116,9,20,0.4,""],["Garbanzos (cocidos)",165,9,27,2.6,""],["Porotos (cocidos)",135,8.5,24,0.5,"frijoles alubias"],["Arvejas (cocidas)",84,5.4,15,0.2,"guisantes"],["Hummus",170,8,14,10,""],
+ ["Zanahoria (cruda)",41,0.9,9.6,0.2,""],["Zanahoria (cocida)",35,0.8,8,0.2,""],["Tomate (crudo)",18,0.9,3.9,0.2,""],["Lechuga",15,1.4,2.9,0.2,""],["Espinaca (cruda)",23,2.9,3.6,0.4,""],["Espinaca (cocida)",23,3,3.8,0.3,""],["Acelga (cocida)",20,1.9,4.1,0.1,""],["Brócoli (cocido)",35,2.4,7,0.4,"brocoli"],["Coliflor (cocida)",23,1.8,4.1,0.5,""],["Zapallito (crudo)",17,1.2,3.1,0.3,"zucchini calabacin"],["Zapallo anco o calabaza (cocido)",40,1,10,0.1,""],
+ ["Papa (cruda)",77,2,17,0.1,"patata"],["Papa (hervida)",87,1.9,20,0.1,"patata"],["Papas fritas (caseras)",312,3.5,41,15,"patatas"],["Papas fritas de bolsa (snack)",536,6.5,53,34,"patatas"],["Puré de papa (con leche y manteca)",110,2,16,4.5,"pure"],["Batata (cocida)",90,2,21,0.1,"camote boniato"],
+ ["Cebolla (cruda)",40,1.1,9,0.1,""],["Morrón o pimiento (crudo)",28,1,6,0.3,"morron"],["Pepino",15,0.7,3.6,0.1,""],["Remolacha (cocida)",44,1.7,10,0.2,"betabel"],["Berenjena (cocida)",35,0.8,8.7,0.2,""],["Choclo (cocido)",96,3.4,19,1.5,"maiz"],["Champiñones (crudos)",22,3.1,3.3,0.3,"champinones hongos"],["Apio",14,0.7,3,0.2,""],["Repollo",25,1.3,5.8,0.1,""],["Ajo",149,6.4,33,0.5,""],["Aceitunas verdes",145,1,4,15,""],["Aceitunas negras",115,0.8,6,11,""],["Rúcula",25,2.6,3.7,0.7,"rucula"],["Puerro",61,1.5,14,0.3,""],["Espárragos (cocidos)",22,2.4,4,0.2,"esparragos"],["Chauchas (cocidas)",35,1.9,8,0.3,"ejotes judias verdes"],["Palta",160,2,9,15,"aguacate"],["Rabanito",16,0.7,3.4,0.1,""],["Hinojo",31,1.2,7,0.2,""],
+ ["Manzana",52,0.3,14,0.2,""],["Banana",89,1.1,23,0.3,"platano"],["Naranja",47,0.9,12,0.1,""],["Mandarina",53,0.8,13,0.3,""],["Pera",57,0.4,15,0.1,""],["Durazno",39,0.9,10,0.3,"melocoton"],["Ciruela",46,0.7,11,0.3,""],["Uvas",69,0.7,18,0.2,"uva"],["Frutillas",32,0.7,7.7,0.3,"fresas frutilla"],["Sandía",30,0.6,7.6,0.2,"sandia"],["Melón",34,0.8,8,0.2,"melon"],["Ananá",50,0.5,13,0.1,"anana piña"],["Kiwi",61,1.1,15,0.5,""],["Limón",29,1.1,9,0.3,"limon"],["Pomelo",42,0.8,11,0.1,""],["Cerezas",63,1,16,0.2,"cereza"],["Arándanos",57,0.7,14,0.3,"arandanos"],["Mango",60,0.8,15,0.4,""],["Higos frescos",74,0.8,19,0.3,"higo"],["Damasco",48,1.4,11,0.4,"albaricoque"],["Papaya",43,0.5,11,0.3,"mamon"],["Granada",83,1.7,19,1.2,""],
+ ["Pasas de uva",300,3,79,0.5,""],["Ciruelas pasas",240,2.2,64,0.4,""],["Dátiles",280,2.5,75,0.4,"datiles"],["Orejones de damasco",241,3.4,63,0.5,""],
+ ["Almendras",579,21,22,50,"frutos secos"],["Nueces",654,15,14,65,"frutos secos"],["Maní (crudo)",567,26,16,49,"mani cacahuate frutos secos"],["Castañas de cajú",553,18,30,44,"castanas caju frutos secos"],["Avellanas",628,15,17,61,"frutos secos"],["Pistachos",560,20,28,45,"frutos secos"],["Semillas de chía",486,17,42,31,"chia"],["Semillas de girasol",584,21,20,51,""],["Semillas de lino",534,18,29,42,"linaza"],["Pasta de maní",590,25,20,50,"mani manteca de mani"],
+ ["Aceite (girasol, oliva o maíz)",884,0,0,100,"oliva girasol"],["Mayonesa",680,1,1,75,""],["Azúcar",387,0,100,0,"azucar"],["Miel",305,0.3,82,0,""],["Mermelada",250,0.4,62,0.1,""],["Dulce de batata o membrillo",270,0.5,67,0.1,""],["Chocolate con leche",535,7.5,57,30,""],["Chocolate amargo",600,7,46,43,""],
+ ["Gelatina (sabor frutal, preparada con azúcar)",62,1.5,14,0,"postre jello"],["Gelatina light (sin azúcar, preparada)",6,1.2,0.3,0,"postre jello dietetica"],["Flan casero (con caramelo)",140,4,20,4.5,"postre"],["Pastafrola (de membrillo o batata)",315,4.5,48,12,"postre pasta frola"],["Arroz con leche",130,3,22,3,"postre"],["Helado de crema",210,3.5,24,11,"postre"],["Torta de chocolate (con relleno)",370,5,50,17,"postre"],["Bizcochuelo de vainilla",300,6,52,7,"postre bizcocho"],["Brownie",466,6,55,25,"postre"],["Panqueque (sin relleno)",190,6,26,7,"postre crepe"],["Tarta de manzana",237,2,34,11,"postre"],
+ ["Gaseosa cola",42,0,10.6,0,"coca refresco"],["Gaseosa light o cero",0,0,0,0,"refresco"],["Jugo de naranja (natural)",45,0.7,10.4,0.2,""],["Cerveza",43,0.5,3.6,0,""],["Vino tinto",85,0.1,2.6,0,""],["Café (sin azúcar)",2,0.1,0,0,"cafe"],["Té o mate cebado (sin azúcar)",1,0,0.2,0,"te"],
+ ["Salsa de tomate",50,1.5,8,1.2,""],["Ketchup",100,1.2,25,0.1,""],["Mostaza",66,4,5,4,""]
+].map(function(f){return{name:f[0],k:f[1],p:f[2],c:f[3],f:f[4],n:nrm(f[0]+" "+f[5])}});
 function nrm(s){return String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g,"")}
 function searchFoods(q){
   var toks=nrm(q).split(/\s+/).filter(Boolean);if(!toks.length)return[];
@@ -306,7 +327,7 @@ function searchFoods(q){
   var out=FOODS.filter(function(f){return toks.every(function(tk){return has(f.n,tk)})});
   function rank(f){var nm=nrm(f.name),p=nm.indexOf(toks[0]);if(p<0&&toks[0].length>3)p=nm.indexOf(toks[0].slice(0,-1));return p<0?99:p}
   out.forEach(function(f,i){f.i=i});out.sort(function(a,b){return rank(a)-rank(b)||a.i-b.i});
-  return out.slice(0,25).map(function(f){return{code:"",name:f.name,brand:"",img:"",kcal:f.k,k100:f.k,serving:"100 g",basis:"100g",generic:true}});
+  return out.slice(0,25).map(function(f){return{code:"",name:f.name,brand:"",img:"",kcal:f.k,k100:f.k,p:f.p,c:f.c,f:f.f,serving:"100 g",basis:"100g",generic:true}});
 }
 
 /* ---------- Open Food Facts ---------- */
@@ -318,7 +339,10 @@ function normalize(p,code){
   if(kS==null&&k100!=null&&sq>0)kS=k100*sq/100;
   if(kS!=null){kcal=kS;basis="serving";serving=p.serving_size||(sq?fmtS(sq)+" g":"1 porción")}
   else if(k100!=null){kcal=k100;basis="100g";serving="100 g"}
-  return{code:p.code||code||"",name:(p.product_name_es||p.product_name||p.generic_name||"Producto sin nombre").trim(),
+  function mac(key){var s=num(n[key+"_serving"]),h=num(n[key+"_100g"]);
+    if(basis==="serving"){if(s!=null)return Math.round(s*10)/10;if(h!=null&&sq>0)return Math.round(h*sq)/100;return null}
+    return h!=null?Math.round(h*10)/10:null}
+  return{p:mac("proteins"),c:mac("carbohydrates"),f:mac("fat"),code:p.code||code||"",name:(p.product_name_es||p.product_name||p.generic_name||"Producto sin nombre").trim(),
     brand:String(p.brands||"").split(",")[0].trim(),img:p.image_front_small_url||"",
     kcal:kcal==null?null:Math.round(kcal*10)/10,k100:k100==null?null:Math.round(k100*10)/10,serving:serving,basis:basis};
 }
@@ -386,6 +410,7 @@ function weightChart(){
 function head(t,act,sub){return'<header class="top"><div class="hl"><h1>'+t+"</h1><small>"+(sub||(DIAS[now.getDay()]+" "+now.getDate()+" de "+MES[now.getMonth()]))+"</small></div>"+(act?'<button class="btn small" data-a="'+(act[1]||"new")+'">'+(act[2]?"":"+ ")+act[0]+"</button>":"")+"</header>"}
 function entryRow(e){
   var g=e.unit==="g",det=g?fmtS(e.servings*100)+" g · "+fmt(e.kcal)+" kcal cada 100 g":fmtS(e.servings)+(e.servings===1?" porción":" porciones")+" × "+fmt(e.kcal)+" kcal"+(e.serving?" ("+esc(e.serving)+")":"");
+  var mm=mtot(e);if(mm)det+=" · P "+fmt(mm.p)+" C "+fmt(mm.c)+" G "+fmt(mm.f);
   return'<button class="tx" data-a="editE" data-id="'+esc(e.id)+'"><span class="dot" style="background:var(--c'+hue(e.name)+')">'+esc(e.name.charAt(0).toUpperCase())+'</span><span class="m"><b>'+esc(e.name)+"</b><small>"+det+'</small></span><span class="a num">'+fmt(etotal(e))+" kcal</span></button>";
 }
 function viewCal(){
@@ -395,6 +420,7 @@ function viewCal(){
    '<div class="bar" role="img" aria-label="'+Math.round(p*100)+'% de la meta"><i class="'+(over?"warn":"")+'" style="width:'+(p*100)+'%"></i></div>'+
    '<p class="hint">'+(over?"Pasaste tu meta de "+fmt(goal)+" kcal por <b>"+fmt(tot-goal)+" kcal</b>.":"Te quedan <b>"+fmt(goal-tot)+" kcal</b> para tu meta de "+fmt(goal)+".")+(isToday?"":' <button class="link" data-a="gotoday">Ir a hoy</button>')+"</p>"+
    '<div class="split"><div class="neu"><small>Promedio 7 días</small><b class="num">'+fmt(avg)+'</b><em>kcal por día con registros</em></div><div class="neu"><small>Alimentos</small><b class="num">'+list.length+"</b><em>cargados este día</em></div></div></div></section>";
+  h+=macroCard(k);
   h+="<section><h2>Comidas</h2><div class=\"card\" style=\"padding:4px 16px\">";
   if(!list.length)h+='<div class="empty"><b>Todavía no cargaste alimentos</b>Tocá «Agregar alimento», escaneá el código de barras o buscá el producto por nombre.</div>';
   else MEALS.forEach(function(m){var L=list.filter(function(e){return e.meal===m});if(!L.length)return;
@@ -468,45 +494,59 @@ function viewForm(){
 /* ---------- plan de peso ---------- */
 var ACTS=[["1.2","Sedentario (casi sin ejercicio)"],["1.375","Ligero (1 a 3 días por semana)"],["1.55","Moderado (3 a 5 días por semana)"],["1.725","Intenso (6 a 7 días por semana)"]];
 function planCalc(){
-  var p=S.plan,last=S.weights[S.weights.length-1],w=num(p.start)||(last&&last.kg)||null,gw=S.target,age=num(p.age),h=num(p.height);
-  if(!p.sex||!age||!h||!w||!gw||!p.date)return{need:true};
-  if(age<18||age>90||h<120||h>230||w<30||w>350||gw<30||gw>350)return{bad:"Revisá los datos: edad (18 a 90), altura (120 a 230 cm) y pesos (30 a 350 kg)."};
-  var d0=new Date();d0.setHours(0,0,0,0);var d1=new Date(p.date+"T00:00:00");var days=Math.round((d1-d0)/864e5);
-  if(!(days>=7))return{bad:"Elegí una fecha objetivo a una semana o más desde hoy."};
-  var bmr=10*w+6.25*h-5*age+(p.sex==="m"?5:-161),tdee=bmr*parseFloat(p.act||1.375);
-  var diff=gw-w,floor=p.sex==="m"?1500:1200,warns=[],lose=diff<0;
-  if(Math.abs(diff)<0.05)return{keep:true,tdee:Math.round(tdee),goal:Math.round(tdee/10)*10,days:days};
-  var daily=diff*7700/days,goal=tdee+daily,clamped=false,realDays=days;
+  var p=S.plan,last=S.weights[S.weights.length-1],w=num(p.start)||(last&&last.kg)||null,gw=S.target,age=num(p.age),h=num(p.height),obj=p.obj||"";
+  if(!p.sex||!age||!h||!w)return{need:true};
+  if(age<18||age>90||h<120||h>230||w<30||w>350||(gw&&(gw<30||gw>350)))return{bad:"Revisá los datos: edad (18 a 90), altura (120 a 230 cm) y pesos (30 a 350 kg)."};
+  var d0=new Date();d0.setHours(0,0,0,0);var days=0;if(p.date){days=Math.round((new Date(p.date+"T00:00:00")-d0)/864e5)}
+  var bmr=10*w+6.25*h-5*age+(p.sex==="m"?5:-161),tdee=bmr*parseFloat(p.act||1.375),floor=p.sex==="m"?1500:1200,warns=[];
+  var dated=!!gw&&days>=7&&(obj===""||obj==="grasa"||obj==="musculo"||obj==="ambas");
+  if(gw&&p.date&&days<7&&(obj===""||obj==="grasa"||obj==="musculo"||obj==="ambas"))return{bad:"Elegí una fecha objetivo a una semana o más desde hoy."};
+  if(!dated&&obj==="")return{need:true};
+  if(!dated){
+    var f={grasa:0.8,musculo:1.1,ambas:0.95,mantener:1,otro:1}[obj],g=tdee*f;
+    if(f<1&&g<floor){g=floor;warns.push("Con tu gasto estimado, el mínimo recomendable de "+fmt(floor)+" kcal ya es casi un déficit completo: conviene consultarlo con un profesional.")}
+    var note={grasa:"Déficit moderado de 20 %. Si cargás un peso objetivo y una fecha, lo ajustamos a tu plazo.",musculo:"Superávit leve de +10 % para ganar músculo con poca grasa. Va de la mano de entrenamiento de fuerza y de la proteína indicada.",ambas:"Cerca del mantenimiento (−5 %) con proteína alta y entrenamiento de fuerza: recomposición lenta pero sostenida.",mantener:"Calorías de mantenimiento para sostener tu peso.",otro:"Calorías de mantenimiento como punto de partida; contale tu objetivo al asistente para afinarlo."}[obj];
+    return{def:true,tdee:Math.round(tdee),goal:Math.round(g/10)*10,daily:Math.round(g-tdee),lose:f<1,warns:warns,note:note,obj:obj,w:w};
+  }
+  var diff=gw-w,lose=diff<0;
+  if(obj==="grasa"&&diff>=0.05)warns.push("Elegiste bajar grasa, pero tu peso objetivo es mayor que el inicial.");
+  if(obj==="musculo"&&diff<=-0.05)warns.push("Elegiste ganar músculo, pero tu peso objetivo es menor que el inicial.");
+  if(Math.abs(diff)<0.05)return{keep:true,tdee:Math.round(tdee),goal:Math.round(tdee/10)*10,days:days,obj:obj,w:w};
+  var daily=diff*7700/days,goal=tdee+daily,clamped=false,room=0;
   if(lose&&goal<floor){
-    clamped=true;goal=floor;var room=tdee-floor;
-    if(room>0){realDays=Math.ceil(-diff*7700/room);var rd=new Date(d0);rd.setDate(rd.getDate()+realDays);warns.push("Para llegar a la fecha pedida habría que comer menos de "+fmt(floor)+" kcal por día, que no es recomendable. Con "+fmt(floor)+" kcal por día llegarías cerca del "+rd.toLocaleDateString("es-AR",{day:"numeric",month:"long",year:"numeric"})+".")}
+    clamped=true;goal=floor;room=tdee-floor;
+    if(room>0){var realDays=Math.ceil(-diff*7700/room),rd=new Date(d0);rd.setDate(rd.getDate()+realDays);warns.push("Para llegar a la fecha pedida habría que comer menos de "+fmt(floor)+" kcal por día, que no es recomendable. Con "+fmt(floor)+" kcal por día llegarías cerca del "+rd.toLocaleDateString("es-AR",{day:"numeric",month:"long",year:"numeric"})+".")}
     else warns.push("Tu gasto estimado está por debajo del mínimo recomendable ("+fmt(floor)+" kcal): conviene consultarlo con un profesional.");
   }
   var wk=Math.abs(diff)/days*7,pct=wk/w*100;
   if(!clamped&&lose&&pct>1)warns.push("El ritmo es exigente (más de 1 % del peso por semana). Conviene alargar el plazo.");
-  if(!lose&&pct>0.5)warns.push("El ritmo de subida es alto. Conviene alargar el plazo para ganar de forma gradual.");
+  if(!lose&&pct>0.5)warns.push("El ritmo de subida es alto: para ganar músculo con poca grasa conviene un ritmo de 0,25 a 0,5 % del peso por semana. Alargá el plazo.");
   var bmi=gw/Math.pow(h/100,2);if(bmi<18.5)warns.push("Tu peso objetivo daría un IMC de "+fmt1(bmi)+", por debajo del rango saludable.");
   var rate=clamped?(room>0?room/7700*7:0):(diff/days*7);
-  return{tdee:Math.round(tdee),daily:Math.round(clamped?-(tdee-goal):daily),goal:Math.round(goal/10)*10,wk:Math.abs(rate),lose:lose,warns:warns,days:days,diff:diff,w:w};
+  return{tdee:Math.round(tdee),daily:Math.round(clamped?-(tdee-goal):daily),goal:Math.round(goal/10)*10,wk:Math.abs(rate),lose:lose,warns:warns,days:days,diff:diff,w:w,obj:obj};
 }
+function macroLine(kcal){var T=macroTargets(kcal);return'<p class="hint" style="margin:0">Con esa meta, tus macros orientativos por día: <b>'+fmt(T.p)+" g de proteínas</b>, "+fmt(T.c)+" g de carbohidratos y "+fmt(T.f)+" g de grasas.</p>"}
 function planOut(){
   var r=planCalc();
-  if(r.need)return'<p class="sub" style="margin:0">Completá todos los datos y vas a ver tu meta diaria de calorías.</p>';
+  if(r.need)return'<p class="sub" style="margin:0">Completá sexo, edad, altura, peso y elegí un objetivo para ver tu meta diaria y tus macros.</p>';
   if(r.bad)return'<p class="sub" style="margin:0;color:var(--out)">'+esc(r.bad)+"</p>";
-  if(r.keep)return'<p class="sub" style="margin:0">Tu peso inicial y el objetivo coinciden: para mantenerlo comé unas <b>'+fmt(r.goal)+" kcal</b> por día.</p>"+'<button class="btn small" data-a="useplan">Usar '+fmt(r.goal)+" kcal como meta diaria</button>";
-  return'<div class="split"><div class="neu"><small>Mantenimiento</small><b class="num">'+fmt(r.tdee)+'</b><em>kcal/día</em></div><div class="neu"><small>'+(r.lose?"Déficit":"Superávit")+'</small><b class="num">'+(r.daily>0?"+":"")+fmt(r.daily)+'</b><em>kcal/día</em></div></div>'+
-   '<p class="hint" style="margin:0">Para '+(r.lose?"bajar ":"subir ")+fmt1(Math.abs(r.diff))+" kg en "+r.days+" días: meta de <b>"+fmt(r.goal)+" kcal por día</b> (unos "+fmt1(r.wk)+" kg por semana).</p>"+
-   r.warns.map(function(x){return'<p class="sub" style="margin:0;color:var(--warn)">'+esc(x)+"</p>"}).join("")+
-   '<button class="btn small" data-a="useplan">Usar '+fmt(r.goal)+" kcal como meta diaria</button>";
+  var btn='<button class="btn small" data-a="useplan">Usar '+fmt(r.goal)+" kcal como meta diaria</button>";
+  if(r.keep)return'<p class="sub" style="margin:0">Tu peso inicial y el objetivo coinciden: para mantenerlo comé unas <b>'+fmt(r.goal)+" kcal</b> por día.</p>"+macroLine(r.goal)+btn;
+  var top='<div class="split"><div class="neu"><small>Mantenimiento</small><b class="num">'+fmt(r.tdee)+'</b><em>kcal/día</em></div><div class="neu"><small>'+(r.daily<0?"Déficit":r.daily>0?"Superávit":"Ajuste")+'</small><b class="num">'+(r.daily>0?"+":"")+fmt(r.daily)+'</b><em>kcal/día</em></div></div>';
+  var mid=r.def?'<p class="hint" style="margin:0">'+(r.obj?"<b>"+esc(objLabel(r.obj))+"</b>: meta sugerida ":"Meta sugerida ")+"de <b>"+fmt(r.goal)+" kcal por día</b>. "+esc(r.note)+"</p>":
+    '<p class="hint" style="margin:0">Para '+(r.lose?"bajar ":"subir ")+fmt1(Math.abs(r.diff))+" kg en "+r.days+" días: meta de <b>"+fmt(r.goal)+" kcal por día</b> (unos "+fmt1(r.wk)+" kg por semana).</p>";
+  return top+mid+macroLine(r.goal)+r.warns.map(function(x){return'<p class="sub" style="margin:0;color:var(--warn)">'+esc(x)+"</p>"}).join("")+btn;
 }
 function readPlan(){
   var p=S.plan;function g(id){var e=$("#"+id);return e?e.value:""}
+  if($("#p-otro"))p.otro=g("p-otro");
   p.age=g("p-age");p.height=g("p-h");p.start=g("p-start");p.date=g("p-date");p.act=g("p-act")||p.act;
   var gw=num(g("p-goalw"));S.target=gw!=null&&gw>=20&&gw<=400?Math.round(gw*10)/10:null;
 }
 function viewPlan(){
   var p=S.plan,last=S.weights[S.weights.length-1],d=new Date();d.setDate(d.getDate()+7);
-  return'<section style="margin-top:4px"><h2>Plan de peso</h2><div class="card set"><p class="sub" style="margin:0">Calculamos tu gasto diario estimado (fórmula de Mifflin-St Jeor) y cuánto tendrías que comer para llegar a tu peso en la fecha que elijas.</p>'+
+  return'<section style="margin-top:4px"><h2>Plan de peso</h2><div class="card set"><p class="sub" style="margin:0">Elegí tu objetivo y calculamos tus calorías (fórmula de Mifflin-St Jeor) y tus macros. El peso objetivo y la fecha son opcionales: sirven para ajustar el plazo al bajar grasa o ganar músculo.</p>'+
+   '<div><label class="l">Objetivo</label><div class="chips">'+OBJ.map(function(o){return'<button class="chip" data-a="pobj" data-o="'+o[0]+'" aria-pressed="'+(p.obj===o[0])+'">'+o[1]+"</button>"}).join("")+"</div></div>"+(p.obj==="otro"?'<div><label class="l" for="p-otro">Contanos tu objetivo</label><input id="p-otro" class="field" style="max-width:none;text-align:left" maxlength="120" placeholder="Ej: rendimiento deportivo, bajar colesterol" value="'+esc(p.otro||"")+'"></div>':"")+
    '<div><label class="l">Sexo</label><div class="chips"><button class="chip" data-a="psex" data-s="m" aria-pressed="'+(p.sex==="m")+'">Hombre</button><button class="chip" data-a="psex" data-s="f" aria-pressed="'+(p.sex==="f")+'">Mujer</button></div></div>'+
    '<div class="srow"><label for="p-age">Edad</label><input id="p-age" class="field" inputmode="numeric" placeholder="años" value="'+esc(p.age)+'"></div>'+
    '<div class="srow"><label for="p-h">Altura (cm)</label><input id="p-h" class="field" inputmode="numeric" placeholder="170" value="'+esc(p.height)+'"></div>'+
@@ -640,16 +680,20 @@ function ctxText(){
   var p=S.plan,pr=null;try{pr=planCalc()}catch(e){}
   if(p&&p.sex)L.push("Perfil: "+(p.sex==="m"?"hombre":"mujer")+(p.age?", "+p.age+" años":"")+(p.height?", "+p.height+" cm":"")+", actividad factor "+p.act+(p.start?", peso inicial "+p.start+" kg":"")+(p.date?", fecha objetivo "+p.date:"")+".");
   if(pr&&pr.goal&&!pr.need&&!pr.bad)L.push("Plan calculado: mantenimiento ~"+pr.tdee+" kcal, meta sugerida "+pr.goal+" kcal.");
+  if(p&&p.obj)L.push("Objetivo del usuario: "+objLabel(p.obj)+(p.obj==="otro"&&p.otro?" ("+p.otro+")":"")+".");
+  var T=macroTargets();L.push("Macros diarios objetivo (orientativos): proteínas "+T.p+" g, carbohidratos "+T.c+" g, grasas "+T.f+" g.");
   var w=S.weights.slice();if(w.length>60)w=[w[0]].concat(w.slice(-59));
   L.push(w.length?"Registros de peso (fecha: kg):\n"+w.map(function(x){return x.d+": "+x.kg}).join("\n"):"Todavía no hay registros de peso.");
   var days=lastDays(30).filter(function(d){return d.kcal>0});
   L.push(days.length?"Calorías totales por día (últimos 30 días, solo días con registro):\n"+days.map(function(d){return d.key+": "+d.kcal}).join("\n"):"No hay calorías registradas en los últimos 30 días.");
   var t7=lastDays(7).filter(function(d){return d.kcal>0});if(t7.length)L.push("Promedio de los últimos 7 días con registro: "+Math.round(t7.reduce(function(a,d){return a+d.kcal},0)/t7.length)+" kcal.");
+  var m7=lastDays(7).filter(function(d){return dayMacros(d.key).n>0});if(m7.length){var sp=0,sc=0,sf=0;m7.forEach(function(d){var m=dayMacros(d.key);sp+=m.p;sc+=m.c;sf+=m.f});L.push("Promedio de macros de los últimos 7 días con datos ("+m7.length+" días): proteínas "+Math.round(sp/m7.length)+" g, carbohidratos "+Math.round(sc/m7.length)+" g, grasas "+Math.round(sf/m7.length)+" g.")}
+  var dm=dayMacros(td);if(dm.n)L.push("Macros de hoy: proteínas "+Math.round(dm.p)+" g, carbohidratos "+Math.round(dm.c)+" g, grasas "+Math.round(dm.f)+" g.");
   var te=entries(td);if(te.length)L.push("Hoy comió:\n"+te.map(function(e){return"- "+e.name+" ("+e.meal+"): "+etotal(e)+" kcal"}).join("\n"));
   return L.join("\n");
 }
-var SYS="Sos el asistente de nutrición y seguimiento dentro de una app personal de calorías y peso de un usuario argentino. Respondé en español rioplatense, en tono cercano y claro, y breve (hasta unas 150 palabras salvo que te pidan más). Usá los datos reales del usuario que figuran abajo para hablar de su evolución: calculá tendencias (kg por semana, promedio de calorías, comparación con la meta y fecha estimada) cuando te pregunten. Si falta un dato, decilo; nunca inventes registros. Las calorías de los alimentos son aproximadas. No hagas diagnósticos ni indiques tratamientos: ante condiciones de salud, dietas muy restrictivas o dudas médicas, sugerí consultar con un profesional. Podés dar ideas de comidas, menús, reemplazos y recetas saludables.\n\nDATOS DEL USUARIO:\n";
-var CHIPS=["¿Cómo voy con el peso?","¿Cuántas calorías comí en promedio esta semana?","Armame un menú de un día para mi meta","Ideas de cenas livianas con pollo","¿Cuánto me falta para mi objetivo?"];
+var SYS="Sos el asistente de nutrición y seguimiento dentro de una app personal de calorías y peso de un usuario argentino. Respondé en español rioplatense, en tono cercano y claro, y breve (hasta unas 150 palabras salvo que te pidan más). Usá los datos reales del usuario que figuran abajo para hablar de su evolución: calculá tendencias (kg por semana, promedio de calorías, comparación con la meta y fecha estimada) cuando te pregunten. Si falta un dato, decilo; nunca inventes registros. Las calorías de los alimentos son aproximadas. No hagas diagnósticos ni indiques tratamientos: ante condiciones de salud, dietas muy restrictivas o dudas médicas, sugerí consultar con un profesional. Adaptá tus consejos al objetivo del usuario: para bajar grasa, déficit moderado, proteína alta, saciedad y entrenamiento de fuerza; para ganar músculo, superávit leve, proteína suficiente repartida en el día y progresión de entrenamiento; para ambas, calorías cercanas al mantenimiento con proteína alta; para mantener, equilibrio. Comparás sus macros con los objetivos y le decís qué le falta o le sobra. Podés dar ideas de comidas, menús, reemplazos y recetas saludables.\n\nDATOS DEL USUARIO:\n";
+var CHIPS=["¿Cómo voy con mis macros hoy?","¿Qué me falta para llegar a mi proteína?","¿Cómo voy con el peso?","¿Cuántas calorías comí en promedio esta semana?","Armame un menú de un día para mi objetivo","Ideas de cenas altas en proteína"];
 function bubbles(){
   return CH.msgs.map(function(m){return'<div class="bub '+m.r+'">'+(m.r==="u"?esc(m.t).replace(/\n/g,"<br>"):mdLite(m.t))+"</div>"}).join("")+(CH.busy?'<div class="bub m" style="color:var(--mute)">Pensando…</div>':"")+(CH.err?'<div class="bub m" style="color:var(--out)">'+esc(CH.err)+"</div>":"");
 }
@@ -680,9 +724,9 @@ function shrink(file,max){return new Promise(function(res,rej){
   var url=URL.createObjectURL(file),im=new Image();
   im.onload=function(){var k=Math.min(1,max/Math.max(im.naturalWidth,im.naturalHeight)),c=document.createElement("canvas");c.width=Math.round(im.naturalWidth*k);c.height=Math.round(im.naturalHeight*k);c.getContext("2d").drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(url);res(c.toDataURL("image/jpeg",0.82).split(",")[1])};
   im.onerror=function(){URL.revokeObjectURL(url);rej(new Error("img"))};im.src=url})}
-var GPROMPT="Sos un nutricionista argentino. Mirá la foto de esta comida e identificá cada alimento o componente visible (por separado: por ejemplo carne, ensalada, papas). Para cada uno estimá los gramos que hay en el plato y las kcal cada 100 g tal como se ve (cocido, frito, con aderezo, etc.). Usá nombres cortos en español rioplatense. Si hay una bebida, incluila. Si la imagen no tiene comida, devolvé una lista vacía. No inventes alimentos que no se ven.";
+var GPROMPT="Sos un nutricionista argentino. Mirá la foto de esta comida e identificá cada alimento o componente visible (por separado: por ejemplo carne, ensalada, papas). Para cada uno estimá los gramos que hay en el plato y las kcal cada 100 g tal como se ve (cocido, frito, con aderezo, etc.). Usá nombres cortos en español rioplatense. Si hay una bebida, incluila. Distinguí con cuidado entre pollo, pescado (merluza, etc.) y carne: fijate la forma, el color y el empanado; si es un producto empanado o rebozado (medallones, nuggets, milanesas), indicalo en el nombre. Para cada alimento dá también proteínas, carbohidratos y grasas en gramos cada 100 g. Si la imagen no tiene comida, devolvé una lista vacía. No inventes alimentos que no se ven.";
 function gemCall(model,key,b64){
-  var body={contents:[{parts:[{text:GPROMPT},{inline_data:{mime_type:"image/jpeg",data:b64}}]}],generationConfig:{temperature:0.2,responseMimeType:"application/json",responseSchema:{type:"OBJECT",properties:{items:{type:"ARRAY",items:{type:"OBJECT",properties:{nombre:{type:"STRING"},gramos:{type:"NUMBER"},kcal_100g:{type:"NUMBER"}},required:["nombre","gramos","kcal_100g"]}}},required:["items"]}}};
+  var body={contents:[{parts:[{text:GPROMPT},{inline_data:{mime_type:"image/jpeg",data:b64}}]}],generationConfig:{temperature:0.2,responseMimeType:"application/json",responseSchema:{type:"OBJECT",properties:{items:{type:"ARRAY",items:{type:"OBJECT",properties:{nombre:{type:"STRING"},gramos:{type:"NUMBER"},kcal_100g:{type:"NUMBER"},proteina_100g:{type:"NUMBER"},carbos_100g:{type:"NUMBER"},grasa_100g:{type:"NUMBER"}},required:["nombre","gramos","kcal_100g","proteina_100g","carbos_100g","grasa_100g"]}}},required:["items"]}}};
   return fetch("https://generativelanguage.googleapis.com/v1beta/models/"+model+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify(body)}).then(function(r){
     return r.json().catch(function(){return{}}).then(function(j){
       if(!r.ok){var e=new Error((j.error&&j.error.message)||("HTTP "+r.status));e.status=r.status;throw e}
@@ -700,7 +744,7 @@ function analyzePhoto(file){
   }).then(function(items){
     if(!A)return;
     if(!items.length){A.mode="search";A.photoErr="No se detectó comida en la foto. Probá con otra más cerca y con buena luz.";drawAdd();return}
-    A.mode="photo";A.rows=items.map(function(x){return{n:String(x.nombre).slice(0,60),g:Math.round(x.gramos),k:Math.round(x.kcal_100g)}});
+    A.mode="photo";A.rows=items.map(function(x){return{n:String(x.nombre).slice(0,60),g:Math.round(x.gramos),k:Math.round(x.kcal_100g),p:num(x.proteina_100g)||0,c:num(x.carbos_100g)||0,f:num(x.grasa_100g)||0}});A.sug={};
     A.meal=defMeal();A.date=V.day;drawAdd();
   }).catch(function(e){
     if(!A)return;A.mode="search";
@@ -709,22 +753,37 @@ function analyzePhoto(file){
   });
 }
 function readRows(){document.querySelectorAll(".pr").forEach(function(r){var i=+r.dataset.i,x=A.rows[i];if(!x)return;x.n=r.querySelector(".pr-n").value;x.g=num(r.querySelector(".pr-g").value)||0;x.k=num(r.querySelector(".pr-k").value)||0});if($("#d_date"))A.date=$("#d_date").value||A.date}
-function photoTotal(){readRows();var s=0;A.rows.forEach(function(x){s+=x.g*x.k/100});var t=$("#p_total");if(t)t.textContent=fmt(s)+" kcal"}
+function photoTotal(){readRows();var s=0,P=0,C=0,F=0;A.rows.forEach(function(x){var q=x.g/100;s+=x.k*q;P+=(x.p||0)*q;C+=(x.c||0)*q;F+=(x.f||0)*q});var t=$("#p_total");if(t)t.textContent=fmt(s)+" kcal";var m=$("#p_macros");if(m)m.textContent="Proteínas "+fmt(P)+" g · Carbos "+fmt(C)+" g · Grasas "+fmt(F)+" g"}
+function rowMac(x){return"P "+fmt1(x.p||0)+" · C "+fmt1(x.c||0)+" · G "+fmt1(x.f||0)+" g cada 100 g"}
 function drawPhoto(){
   $("#layer").innerHTML='<div class="scrim still" data-a="scrim"><div class="sheet" role="dialog" aria-modal="true" aria-label="Revisar foto"><div class="sh"><button class="link" data-a="toresults">← Volver</button><button class="ib" data-a="close" aria-label="Cerrar">'+ic("x")+"</button></div>"+
-   '<p class="sub" style="margin:0">Esto es una <b>estimación</b> hecha con IA a partir de la foto. Corregí nombres, gramos o calorías antes de agregar.</p>'+
-   A.rows.map(function(x,i){return'<div class="card pr" data-i="'+i+'" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><div class="searchrow"><input class="field pr-n" aria-label="Alimento" value="'+esc(x.n)+'"><button class="ib" data-a="prdel" data-i="'+i+'" aria-label="Quitar">'+ic("x")+'</button></div><div class="searchrow"><label class="sub" style="flex:1">Gramos<input class="field pr-g" inputmode="decimal" value="'+esc(String(x.g).replace(".",","))+'"></label><label class="sub" style="flex:1">kcal cada 100 g<input class="field pr-k" inputmode="decimal" value="'+esc(String(x.k).replace(".",","))+'"></label></div></div>'}).join("")+
-   '<div class="total"><span>Total</span><b class="num" id="p_total">0 kcal</b></div>'+
+   '<p class="sub" style="margin:0">Esto es una <b>estimación</b> hecha con IA a partir de la foto. Si se equivocó con un alimento, cambiale el nombre: te sugerimos opciones al escribir, o tocá «Recalcular con IA».</p>'+
+   A.rows.map(function(x,i){return'<div class="card pr" data-i="'+i+'" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><div class="searchrow"><input class="field pr-n" aria-label="Alimento" value="'+esc(x.n)+'"><button class="ib" data-a="prdel" data-i="'+i+'" aria-label="Quitar">'+ic("x")+'</button></div><div class="chips pr-sug" id="sug-'+i+'"></div><div class="searchrow"><label class="sub" style="flex:1">Gramos<input class="field pr-g" inputmode="decimal" value="'+esc(String(x.g).replace(".",","))+'"></label><label class="sub" style="flex:1">kcal cada 100 g<input class="field pr-k" inputmode="decimal" value="'+esc(String(x.k).replace(".",","))+'"></label></div><div class="searchrow" style="align-items:center;justify-content:space-between"><small class="sub">'+rowMac(x)+'</small><button class="btn sec small" data-a="prai" data-i="'+i+'">Recalcular con IA</button></div></div>'}).join("")+
+   '<div class="total"><span>Total</span><b class="num" id="p_total">0 kcal</b></div><div class="sub" id="p_macros" style="margin-top:-8px;text-align:right"></div>'+
    '<div><label class="l">Comida</label><div class="chips" id="d_meals">'+MEALS.map(function(m){return'<button class="chip" data-a="meal" data-m="'+m+'" aria-pressed="'+(A.meal===m)+'">'+m+"</button>"}).join("")+"</div></div>"+
    '<div><label class="l" for="d_date">Fecha</label><input id="d_date" class="field" type="date" max="'+ymd(now)+'" value="'+A.date+'"></div>'+
    '<button class="btn" data-a="photoadd">Agregar al día</button></div></div>';
   photoTotal();
 }
+function showSug(i,val){
+  var box=$("#sug-"+i);if(!box)return;A.sug=A.sug||{};
+  var L=String(val).trim().length>=2?searchFoods(val).slice(0,4):[];A.sug[i]=L;
+  box.innerHTML=L.map(function(s,j){return'<button class="chip" data-a="prsug" data-i="'+i+'" data-j="'+j+'">'+esc(s.name.replace(/\s*\(.*\)/,""))+" · "+fmt(s.k100)+" kcal</button>"}).join("");
+}
+function aiRow(i){
+  readRows();var x=A.rows[i];if(!x||!x.n.trim())return;
+  var key=getKey();if(!key){toast("Cargá tu clave de Gemini en Ajustes");return}
+  var btn=document.querySelector('[data-a="prai"][data-i="'+i+'"]');if(btn){btn.disabled=true;btn.textContent="Calculando…"}
+  gemGen({contents:[{parts:[{text:"Alimento: "+x.n+".\nDame las calorías y los macros cada 100 g de este alimento tal como se consume normalmente (cocido, preparado, etc.), con valores promedio de tablas nutricionales."}]}],generationConfig:{temperature:0.1,responseMimeType:"application/json",responseSchema:{type:"OBJECT",properties:{kcal_100g:{type:"NUMBER"},proteina_100g:{type:"NUMBER"},carbos_100g:{type:"NUMBER"},grasa_100g:{type:"NUMBER"}},required:["kcal_100g","proteina_100g","carbos_100g","grasa_100g"]}}}).then(function(tx){
+    var o=parseJSONLoose(tx);if(!A||!A.rows||!A.rows[i])return;readRows();
+    A.rows[i].k=Math.round(num(o.kcal_100g)||0);A.rows[i].p=num(o.proteina_100g)||0;A.rows[i].c=num(o.carbos_100g)||0;A.rows[i].f=num(o.grasa_100g)||0;drawPhoto();toast("Actualizado: "+A.rows[i].k+" kcal cada 100 g");
+  }).catch(function(e){if(btn){btn.disabled=false;btn.textContent="Recalcular con IA"}toast(e instanceof SyntaxError||(e&&e.message==="json")?"No se pudo interpretar la respuesta":gemErr(e))});
+}
 function addPhoto(){
   readRows();var n=0;
   A.rows.forEach(function(x){
     var name=String(x.n||"").trim();if(!name||!(x.g>0)||x.k<0)return;
-    (S.cal[A.date]=S.cal[A.date]||[]).push({id:uid(),name:name,brand:"",code:"",kcal:Math.round(x.k*10)/10,servings:Math.round(x.g/100*10000)/10000,serving:"100 g",meal:A.meal,unit:"g"});n++;
+    (S.cal[A.date]=S.cal[A.date]||[]).push({id:uid(),name:name,brand:"",code:"",kcal:Math.round(x.k*10)/10,p:Math.round((x.p||0)*10)/10,c:Math.round((x.c||0)*10)/10,f:Math.round((x.f||0)*10)/10,servings:Math.round(x.g/100*10000)/10000,serving:"100 g",meal:A.meal,unit:"g"});n++;
   });
   if(!n){toast("No hay alimentos para agregar");return}
   V.day=A.date;V.tab="cal";persist();closeSheet();render(true);window.scrollTo(0,0);toast(n+(n===1?" alimento agregado":" alimentos agregados"));
@@ -794,6 +853,7 @@ function openDetail(it,opts){
   A.servings=opts.servings||1;A.grams=opts.grams||100;
   A.meal=opts.meal||defMeal();A.date=opts.date||V.day;A.editId=opts.editId||null;A.confirm=false;drawAdd();
 }
+function mv(x){return x==null||x===""?"":esc(String(x).replace(".",","))}
 function drawDetail(){
   var it=A.item,custom=!!it.custom,g=A.unit==="g";
   var kc=it.kcal===""||it.kcal==null?"":esc(String(it.kcal).replace(".",","));
@@ -807,9 +867,10 @@ function drawDetail(){
      '<div><h3 class="t">'+esc(it.name)+'</h3><div class="sub">'+(it.brand?esc(it.brand)+" · ":"")+(g?"Cada 100 g":(it.serving?"Porción: "+esc(it.serving):""))+"</div></div>")+
    '<div class="card" style="padding:8px 16px"><div class="amt"><input id="d_kcal" inputmode="decimal" placeholder="0" aria-label="'+(g?"Calorías cada 100 gramos":"Calorías por porción")+'" value="'+kc+'"><span>'+(g?"kcal cada 100 g":"kcal por porción")+"</span></div>"+
    (custom&&!g?'<div style="padding-bottom:10px"><label class="l" for="d_serv_txt">Tamaño de la porción (opcional)</label><input id="d_serv_txt" class="field" maxlength="40" placeholder="Ej: 1 unidad, 30 g" value="'+esc(it.serving||"")+'"></div>':"")+"</div>"+note+
+   '<div><label class="l">Macros en gramos (opcional) · '+(g?"cada 100 g":"por porción")+'</label><div class="searchrow"><label class="sub" style="flex:1">Proteínas<input id="d_p" class="field" inputmode="decimal" placeholder="0" value="'+mv(it.p)+'"></label><label class="sub" style="flex:1">Carbos<input id="d_c" class="field" inputmode="decimal" placeholder="0" value="'+mv(it.c)+'"></label><label class="sub" style="flex:1">Grasas<input id="d_f" class="field" inputmode="decimal" placeholder="0" value="'+mv(it.f)+'"></label></div></div>'+
    (g?'<div><label class="l" for="d_g">¿Cuántos gramos vas a comer?</label><div class="stepper"><button class="ib" data-a="gm" data-d="-10" aria-label="10 gramos menos">−</button><input id="d_g" class="field" inputmode="decimal" value="'+esc(String(A.grams).replace(".",","))+'"><button class="ib" data-a="gm" data-d="10" aria-label="10 gramos más">+</button></div><div class="chips" style="margin-top:10px">'+[50,100,150,200,250].map(function(n){return'<button class="chip" data-a="gset" data-g="'+n+'">'+n+" g</button>"}).join("")+"</div></div>":
      '<div><label class="l" for="d_serv">¿Cuántas porciones vas a comer?</label><div class="stepper"><button class="ib" data-a="sv" data-d="-0.5" aria-label="Menos porciones">−</button><input id="d_serv" class="field" inputmode="decimal" value="'+esc(String(A.servings).replace(".",","))+'"><button class="ib" data-a="sv" data-d="0.5" aria-label="Más porciones">+</button></div></div>')+
-   '<div class="total"><span>Total</span><b class="num" id="d_total">0 kcal</b></div>'+
+   '<div class="total"><span>Total</span><b class="num" id="d_total">0 kcal</b></div><div class="sub" id="d_macros" style="margin-top:-8px;text-align:right"></div>'+
    '<div><label class="l">Comida</label><div class="chips" id="d_meals">'+MEALS.map(function(m){return'<button class="chip" data-a="meal" data-m="'+m+'" aria-pressed="'+(A.meal===m)+'">'+m+"</button>"}).join("")+"</div></div>"+
    '<div><label class="l" for="d_date">Fecha</label><input id="d_date" class="field" type="date" max="'+ymd(now)+'" value="'+A.date+'"></div>'+
    '<button class="btn" data-a="addfood">'+(A.editId?"Guardar cambios":"Agregar al día")+"</button>"+(A.editId?'<button class="btn del" data-a="delE">'+(A.confirm?"Tocá de nuevo para eliminar":"Eliminar")+"</button>":"")+"</div></div>";
@@ -817,7 +878,7 @@ function drawDetail(){
 }
 function readDetail(){
   if(!$("#d_kcal"))return;
-  A.item.kcal=$("#d_kcal").value;
+  A.item.kcal=$("#d_kcal").value;if($("#d_p")){A.item.p=$("#d_p").value;A.item.c=$("#d_c").value;A.item.f=$("#d_f").value}
   if($("#d_name"))A.item.name=$("#d_name").value;
   if($("#d_serv_txt"))A.item.serving=$("#d_serv_txt").value;
   var s=$("#d_serv")?num($("#d_serv").value):null;if(s!=null)A.servings=s;
@@ -829,6 +890,8 @@ function updateTotal(){
   var k=num($("#d_kcal")?$("#d_kcal").value:null),f;
   if(A.unit==="g"){f=num($("#d_g")?$("#d_g").value:null);if(f!=null)f=f/100}else f=num($("#d_serv")?$("#d_serv").value:null);
   t.textContent=(k!=null&&f!=null&&k>=0&&f>0?fmt(k*f):"0")+" kcal";
+  var md=$("#d_macros");if(md){var P=num($("#d_p")?$("#d_p").value:null),C=num($("#d_c")?$("#d_c").value:null),F=num($("#d_f")?$("#d_f").value:null);
+    md.textContent=f!=null&&f>0&&(P!=null||C!=null||F!=null)?"Proteínas "+fmt1((P||0)*f)+" g · Carbos "+fmt1((C||0)*f)+" g · Grasas "+fmt1((F||0)*f)+" g":""}
 }
 function closeSheet(){$("#layer").innerHTML="";A=null;W=null;stopScan();$("#scanlayer").innerHTML=""}
 function addFood(){
@@ -842,14 +905,15 @@ function addFood(){
   var serv=g?"100 g":String(it.serving||"").trim();
   var rec={id:A.editId||uid(),name:name,brand:it.brand||"",code:it.code||"",kcal:Math.round(k*10)/10,servings:Math.round(f*10000)/10000,serving:serv,meal:A.meal};
   if(g)rec.unit="g";
+  var mp=num(it.p),mc=num(it.c),mf=num(it.f);if(mp!=null||mc!=null||mf!=null){rec.p=mp==null?0:Math.round(mp*10)/10;rec.c=mc==null?0:Math.round(mc*10)/10;rec.f=mf==null?0:Math.round(mf*10)/10}
   if(A.editId){
     Object.keys(S.cal).forEach(function(d){S.cal[d]=S.cal[d].filter(function(e){return e.id!==A.editId});if(!S.cal[d].length)delete S.cal[d]});
   }
   (S.cal[date]=S.cal[date]||[]).push(rec);
   var basis=g?"100g":(it.basis||"serving");
-  var ri={code:it.code||"",name:name,brand:it.brand||"",img:it.img||"",kcal:rec.kcal,k100:it.k100==null?null:it.k100,serving:serv||(basis==="100g"?"100 g":""),basis:basis,generic:!!it.generic};
+  var ri={code:it.code||"",name:name,brand:it.brand||"",img:it.img||"",kcal:rec.kcal,k100:it.k100==null?null:it.k100,serving:serv||(basis==="100g"?"100 g":""),basis:basis,generic:!!it.generic,p:rec.p==null?null:rec.p,c:rec.c==null?null:rec.c,f:rec.f==null?null:rec.f};
   S.recent=[ri].concat(S.recent.filter(function(x){return!(ri.code&&x.code===ri.code)&&x.name!==ri.name})).slice(0,12);
-  if(it.custom&&it.code){S.local=S.local||{};S.local[it.code]={code:it.code,name:name,brand:it.brand||"",img:"",kcal:rec.kcal,k100:null,serving:ri.serving,basis:basis}}
+  if(it.custom&&it.code){S.local=S.local||{};S.local[it.code]={code:it.code,name:name,brand:it.brand||"",img:"",kcal:rec.kcal,k100:null,serving:ri.serving,basis:basis,p:ri.p,c:ri.c,f:ri.f}}
   V.day=date;V.tab="cal";persist();var edit=!!A.editId;closeSheet();render(true);window.scrollTo(0,0);toast(edit?"Cambios guardados":"Alimento agregado");
 }
 function findEntry(id){var r=null;Object.keys(S.cal).forEach(function(d){S.cal[d].forEach(function(e){if(e.id===id)r={e:e,d:d}})});return r}
@@ -1003,7 +1067,7 @@ document.addEventListener("click",function(e){
     case"meal":A.meal=el.dataset.m;document.querySelectorAll("#d_meals .chip").forEach(function(c){c.setAttribute("aria-pressed",String(c.dataset.m===A.meal))});break;
     case"addfood":addFood();break;
     case"editE":{var f=findEntry(id);if(!f)break;var ee=f.e,gu=ee.unit==="g";
-      A={mode:"detail",drawn:true,list:null,item:{custom:true,name:ee.name,brand:ee.brand,code:ee.code,kcal:ee.kcal,serving:gu?"":ee.serving,unit:ee.unit},unit:gu?"g":"p",servings:gu?1:ee.servings,grams:gu?Math.round(ee.servings*100*10)/10:100,meal:ee.meal,date:f.d,editId:ee.id,confirm:false};
+      A={mode:"detail",drawn:true,list:null,item:{custom:true,name:ee.name,brand:ee.brand,code:ee.code,kcal:ee.kcal,p:ee.p,c:ee.c,f:ee.f,serving:gu?"":ee.serving,unit:ee.unit},unit:gu?"g":"p",servings:gu?1:ee.servings,grams:gu?Math.round(ee.servings*100*10)/10:100,meal:ee.meal,date:f.d,editId:ee.id,confirm:false};
       drawDetail();break}
     case"delE":
       if(!A.confirm){readDetail();A.confirm=true;drawDetail();break}
@@ -1020,6 +1084,9 @@ document.addEventListener("click",function(e){
     case"savekey":{var kv=($("#gkey")||{}).value;kv=(kv||"").trim();if(kv.length<20){toast("Pegá la clave completa");break}setKey(kv);A.keyPrompt=false;drawAdd();toast("Clave guardada. Tocá «Foto de la comida».");break}
     case"prdel":readRows();A.rows.splice(+el.dataset.i,1);if(!A.rows.length){A.mode="search";drawAdd()}else drawPhoto();break;
     case"photoadd":addPhoto();break;
+    case"prsug":{readRows();var sx=A.sug&&A.sug[+el.dataset.i]&&A.sug[+el.dataset.i][+el.dataset.j],rx=A.rows[+el.dataset.i];if(sx&&rx){rx.n=sx.name;rx.k=sx.k100;rx.p=sx.p;rx.c=sx.c;rx.f=sx.f;drawPhoto()}break}
+    case"prai":aiRow(+el.dataset.i);break;
+    case"pobj":readPlan();S.plan.obj=S.plan.obj===el.dataset.o?"":el.dataset.o;persist();render(true);break;
     case"scanphoto":{var pi=$("#scan-photo");if(pi)pi.click();break}
     case"manualcode":openDetail({custom:true,name:"",brand:"",code:(A&&A.notFoundCode)||"",kcal:"",serving:""});break;
     case"scanclose":stopScan();$("#scanlayer").innerHTML="";break;
@@ -1057,7 +1124,8 @@ document.addEventListener("input",function(e){
   var id=e.target.id;
   if(id==="rec-q"){V.q=e.target.value;renderRec()}
   if(id&&id.indexOf("p-")===0&&id!=="p-act"&&$("#plan-out")){readPlan();persist();$("#plan-out").innerHTML=planOut()}
-  if(id==="d_kcal"||id==="d_serv"||id==="d_g")updateTotal();
+  if(id==="d_kcal"||id==="d_serv"||id==="d_g"||id==="d_p"||id==="d_c"||id==="d_f")updateTotal();
+  if(e.target.classList&&e.target.classList.contains("pr-n")&&A&&A.rows){showSug(+e.target.closest(".pr").dataset.i,e.target.value)}
   if(e.target.classList&&(e.target.classList.contains("pr-g")||e.target.classList.contains("pr-k"))&&A&&A.rows)photoTotal();
 });
 document.addEventListener("keydown",function(e){

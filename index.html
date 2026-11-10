@@ -552,19 +552,34 @@ function animate(){
 }
 
 /* ---------- Gemini genérico ---------- */
+var GM=null;
+function pickModels(list){
+  var bad=/image|tts|live|audio|embed|robot|computer|customtools|learnlm|gemma|aqa|imagen|veo|native/i;
+  var c=list.filter(function(m){return(m.supportedGenerationMethods||[]).indexOf("generateContent")>-1}).map(function(m){return String(m.name).replace(/^models\//,"")}).filter(function(n){return/^gemini-/.test(n)&&/flash/.test(n)&&!bad.test(n)});
+  function sc(n){var v=(n.match(/gemini-(\d+(?:\.\d+)?)/)||[0,0])[1];return(/latest/.test(n)?1000:0)+(/preview|exp/.test(n)?-50:0)+(/lite/.test(n)?-20:0)+parseFloat(v)*10}
+  c.sort(function(a,b){return sc(b)-sc(a)});return c.slice(0,5);
+}
+function modelList(key){
+  if(GM)return Promise.resolve(GM);
+  try{var s=JSON.parse(localStorage.getItem("caloriasypeso.gm")||"null");if(s&&s.k===key&&Date.now()-s.t<864e5&&s.l.length){GM=s.l;return Promise.resolve(GM)}}catch(e){}
+  return fetch("https://generativelanguage.googleapis.com/v1beta/models?pageSize=200",{headers:{"x-goog-api-key":key}}).then(function(r){return r.ok?r.json():{}}).then(function(j){
+    var l=pickModels(j.models||[]);if(!l.length)l=GMODELS.slice();GM=l;
+    try{localStorage.setItem("caloriasypeso.gm",JSON.stringify({k:key,t:Date.now(),l:l}))}catch(e){}return l;
+  }).catch(function(){return GMODELS.slice()});
+}
 function gemGen(body){
   var key=getKey();if(!key){var e0=new Error("sin clave");e0.nokey=true;return Promise.reject(e0)}
-  var i=0;
+  var i=0,L=null;
   function go(){
-    return fetch("https://generativelanguage.googleapis.com/v1beta/models/"+GMODELS[i]+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify(body)}).then(function(r){
+    return fetch("https://generativelanguage.googleapis.com/v1beta/models/"+L[i]+":generateContent",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify(body)}).then(function(r){
       return r.json().catch(function(){return{}}).then(function(j){
         if(!r.ok){var e=new Error((j.error&&j.error.message)||("HTTP "+r.status));e.status=r.status;throw e}
         var c=j.candidates&&j.candidates[0],tx=c&&c.content&&c.content.parts&&c.content.parts.map(function(p){return p.text||""}).join("");
         if(!tx){var e2=new Error("vacío");e2.empty=true;throw e2}
         return tx})
-    }).catch(function(e){if(i<GMODELS.length-1&&(e.status===404||e.status===429||e.status===503)){i++;return go()}throw e});
+    }).catch(function(e){if(i<L.length-1&&(e.status===404||e.status===429||e.status===503)){i++;return go()}throw e});
   }
-  return go();
+  return modelList(key).then(function(l){L=l;return go()}).catch(function(e){if(e&&e.status===404){GM=null;try{localStorage.removeItem("caloriasypeso.gm")}catch(x){}}throw e});
 }
 function gemErr(e){
   if(e&&e.nokey)return"Primero cargá tu clave gratuita de Gemini en Ajustes.";
@@ -572,7 +587,7 @@ function gemErr(e){
   if(s===400&&/API key|API_KEY/i.test(m)||s===403)return"La clave de Gemini no es válida. Revisala en Ajustes.";
   if(s===429)return"Se agotó el límite gratuito de Gemini por ahora. Probá en un rato.";
   if(!s)return e&&e.empty?"Gemini no devolvió una respuesta. Probá de nuevo.":"No pudimos conectar con Gemini. Revisá tu conexión.";
-  return"Gemini devolvió un error ("+s+"). Probá de nuevo.";
+  return"Gemini devolvió un error ("+s+"): "+m.slice(0,140)+(s===404?" Si sigue, avisame este mensaje.":"");
 }
 function mdLite(s){
   return esc(s).replace(/\*\*(.+?)\*\*/g,"<b>$1</b>").replace(/^\s*[-*]\s+/gm,"• ").replace(/\n/g,"<br>");
@@ -679,9 +694,9 @@ function analyzePhoto(file){
   var key=getKey();if(!key){A.mode="search";A.keyPrompt=true;A.pendingFile=file;drawAdd();return}
   A.mode="photoload";drawAdd();
   shrink(file,1024).then(function(b64){
-    var i=0;
-    function go(){return gemCall(GMODELS[i],key,b64).catch(function(e){if(i<GMODELS.length-1&&(e.status===404||e.status===429||e.status===503)){i++;return go()}throw e})}
-    return go();
+    return modelList(key).then(function(L){var i=0;
+      function go(){return gemCall(L[i],key,b64).catch(function(e){if(i<L.length-1&&(e.status===404||e.status===429||e.status===503)){i++;return go()}throw e})}
+      return go()}).catch(function(e){if(e&&e.status===404){GM=null;try{localStorage.removeItem("caloriasypeso.gm")}catch(x){}}throw e});
   }).then(function(items){
     if(!A)return;
     if(!items.length){A.mode="search";A.photoErr="No se detectó comida en la foto. Probá con otra más cerca y con buena luz.";drawAdd();return}
@@ -689,8 +704,7 @@ function analyzePhoto(file){
     A.meal=defMeal();A.date=V.day;drawAdd();
   }).catch(function(e){
     if(!A)return;A.mode="search";
-    var s=e&&e.status,m=String((e&&e.message)||"");
-    A.photoErr=s===400&&/API key|API_KEY/i.test(m)||s===403?"La clave de Gemini no es válida. Revisala en Ajustes.":s===429?"Se agotó el límite gratuito de Gemini por ahora. Probá en un rato o cargalo a mano.":!s?"No pudimos conectar con Gemini. Revisá tu conexión.":"Gemini devolvió un error ("+s+"). Probá de nuevo.";
+    A.photoErr=gemErr(e);
     drawAdd();
   });
 }

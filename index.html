@@ -145,6 +145,11 @@ nav.tabs>div{max-width:560px;margin:0 auto;display:grid;grid-template-columns:re
 .bub{max-width:88%;padding:10px 14px;border-radius:18px;font-size:15px;line-height:1.45;overflow-wrap:anywhere}
 .bub.u{align-self:flex-end;background:var(--accent);color:#fff;border-bottom-right-radius:6px}
 .bub.m{align-self:flex-start;background:var(--surface);border:1px solid var(--line);border-bottom-left-radius:6px}
+.think{font-size:13px;color:var(--mute);margin:0 0 8px;border-left:3px solid var(--line);padding-left:10px}
+.think summary{cursor:pointer;font-weight:600}
+.think div{margin-top:6px}
+#chat-msgs,#chat-live{display:flex;flex-direction:column;gap:10px}
+#chat-live:empty{display:none}
 #chat-msgs{display:flex;flex-direction:column;gap:10px;margin-top:6px}
 .tab{display:flex;flex-direction:column;align-items:center;gap:1px;padding:2px 0 4px;font-size:11.5px;font-weight:600;color:var(--mute)}
 .tab svg{width:23px;height:23px;stroke:currentColor;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
@@ -626,6 +631,7 @@ function gemErr(e){
   var s=e&&e.status,m=String((e&&e.message)||"");
   if(s===400&&/API key|API_KEY/i.test(m)||s===403)return"La clave de Gemini no es válida. Revisala en Ajustes.";
   if(s===429)return"Se agotó el límite gratuito de Gemini por ahora. Probá en un rato.";
+  if(e&&e.timeout)return"Gemini tardó demasiado en responder. Probá de nuevo.";
   if(!s)return e&&e.empty?"Gemini no devolvió una respuesta. Probá de nuevo.":"No pudimos conectar con Gemini. Revisá tu conexión.";
   return"Gemini devolvió un error ("+s+"): "+m.slice(0,140)+(s===404?" Si sigue, avisame este mensaje.":"");
 }
@@ -692,28 +698,85 @@ function ctxText(){
   var te=entries(td);if(te.length)L.push("Hoy comió:\n"+te.map(function(e){return"- "+e.name+" ("+e.meal+"): "+etotal(e)+" kcal"}).join("\n"));
   return L.join("\n");
 }
-var SYS="Sos el asistente de nutrición y seguimiento dentro de una app personal de calorías y peso de un usuario argentino. Respondé en español rioplatense, en tono cercano y claro, y breve (hasta unas 150 palabras salvo que te pidan más). Usá los datos reales del usuario que figuran abajo para hablar de su evolución: calculá tendencias (kg por semana, promedio de calorías, comparación con la meta y fecha estimada) cuando te pregunten. Si falta un dato, decilo; nunca inventes registros. Las calorías de los alimentos son aproximadas. No hagas diagnósticos ni indiques tratamientos: ante condiciones de salud, dietas muy restrictivas o dudas médicas, sugerí consultar con un profesional. Adaptá tus consejos al objetivo del usuario: para bajar grasa, déficit moderado, proteína alta, saciedad y entrenamiento de fuerza; para ganar músculo, superávit leve, proteína suficiente repartida en el día y progresión de entrenamiento; para ambas, calorías cercanas al mantenimiento con proteína alta; para mantener, equilibrio. Comparás sus macros con los objetivos y le decís qué le falta o le sobra. Podés dar ideas de comidas, menús, reemplazos y recetas saludables.\n\nDATOS DEL USUARIO:\n";
+var SYS="Sos el asistente de nutrición y seguimiento dentro de una app personal de calorías y peso de un usuario argentino. Respondé en español rioplatense, en tono cercano y claro, y breve (hasta unas 150 palabras salvo que te pidan más). Cuando pidan una dieta o un menú, devolvelo en formato compacto con listas cortas (comida, porción y calorías aproximadas) y, si piden un cambio, modificá solo lo pedido sin repetir todo con explicaciones largas. Usá los datos reales del usuario que figuran abajo para hablar de su evolución: calculá tendencias (kg por semana, promedio de calorías, comparación con la meta y fecha estimada) cuando te pregunten. Si falta un dato, decilo; nunca inventes registros. Las calorías de los alimentos son aproximadas. No hagas diagnósticos ni indiques tratamientos: ante condiciones de salud, dietas muy restrictivas o dudas médicas, sugerí consultar con un profesional. Adaptá tus consejos al objetivo del usuario: para bajar grasa, déficit moderado, proteína alta, saciedad y entrenamiento de fuerza; para ganar músculo, superávit leve, proteína suficiente repartida en el día y progresión de entrenamiento; para ambas, calorías cercanas al mantenimiento con proteína alta; para mantener, equilibrio. Comparás sus macros con los objetivos y le decís qué le falta o le sobra. Podés dar ideas de comidas, menús, reemplazos y recetas saludables.\n\nDATOS DEL USUARIO:\n";
 var CHIPS=["¿Cómo voy con mis macros hoy?","¿Qué me falta para llegar a mi proteína?","¿Cómo voy con el peso?","¿Cuántas calorías comí en promedio esta semana?","Armame un menú de un día para mi objetivo","Ideas de cenas altas en proteína"];
+function thinkHtml(th,open){return th?'<details class="think"'+(open?" open":"")+"><summary>"+(open?"Razonando…":"Ver razonamiento")+"</summary><div>"+mdLite(th)+"</div></details>":""}
 function bubbles(){
-  return CH.msgs.map(function(m){return'<div class="bub '+m.r+'">'+(m.r==="u"?esc(m.t).replace(/\n/g,"<br>"):mdLite(m.t))+"</div>"}).join("")+(CH.busy?'<div class="bub m" style="color:var(--mute)">Pensando…</div>':"")+(CH.err?'<div class="bub m" style="color:var(--out)">'+esc(CH.err)+"</div>":"");
+  return CH.msgs.map(function(m){return'<div class="bub '+m.r+'">'+(m.r==="u"?esc(m.t).replace(/\n/g,"<br>"):thinkHtml(m.th,false)+mdLite(m.t))+"</div>"}).join("")+(CH.err?'<div class="bub m" style="color:var(--out)">'+esc(CH.err)+'<br><button class="link" data-a="chatretry">Reintentar</button></div>':"");
+}
+function liveHtml(){
+  if(!CH.busy)return"";
+  var L=CH.live||{th:"",t:""},secs=Math.round((Date.now()-CH.t0)/1000);
+  return'<div class="bub m">'+thinkHtml(L.th,!L.t)+(L.t?mdLite(L.t):'<span style="color:var(--mute)">'+(L.th?"":"Pensando… ")+secs+" s</span>")+"</div>";
 }
 function viewChat(){
   loadChat();
   var h=head("Asistente",CH.msgs.length?["Borrar chat","chatclear",true]:null);
   if(!getKey())return h+'<section style="margin-top:4px"><div class="card empty"><b>Falta tu clave de Gemini</b>Para charlar con el asistente necesitás una clave gratuita. Cargala en <button class="link" data-a="tab" data-v="settings">Ajustes</button>.</div></section>';
-  return h+'<section style="margin-top:4px">'+(CH.msgs.length?"":'<div class="card" style="padding:14px 16px"><p class="sub" style="margin:0 0 10px">Preguntame sobre comidas o sobre cómo viene tu seguimiento de peso y calorías.</p><div class="chips">'+CHIPS.map(function(c,i){return'<button class="chip" data-a="chatchip" data-i="'+i+'">'+esc(c)+"</button>"}).join("")+"</div></div>")+'<div id="chat-msgs">'+bubbles()+'</div></section><div class="chatbar"><div><input id="chat-in" class="field" enterkeyhint="send" autocomplete="off" placeholder="Escribí tu pregunta" aria-label="Mensaje"><button class="btn small" data-a="chatsend">Enviar</button></div></div>';
+  return h+'<section style="margin-top:4px">'+(CH.msgs.length||CH.busy?"":'<div class="card" style="padding:14px 16px"><p class="sub" style="margin:0 0 10px">Preguntame sobre comidas o sobre cómo viene tu seguimiento de peso y calorías.</p><div class="chips">'+CHIPS.map(function(c,i){return'<button class="chip" data-a="chatchip" data-i="'+i+'">'+esc(c)+"</button>"}).join("")+"</div></div>")+'<div id="chat-msgs">'+bubbles()+'</div><div id="chat-live" style="margin-top:10px">'+liveHtml()+'</div></section><div class="chatbar"><div><input id="chat-in" class="field" enterkeyhint="send" autocomplete="off" placeholder="Escribí tu pregunta" aria-label="Mensaje"><button class="btn small" id="chat-btn" data-a="'+(CH.busy?"chatstop":"chatsend")+'">'+(CH.busy?"Detener":"Enviar")+"</button></div></div>";
 }
-function paintChat(){var m=$("#chat-msgs");if(m){m.innerHTML=bubbles();window.scrollTo(0,document.body.scrollHeight)}else render(true)}
-function chatSend(text){
-  loadChat();text=String(text||"").trim();if(!text||CH.busy)return;
-  CH.err=null;CH.msgs.push({r:"u",t:text.slice(0,1500)});CH.busy=true;saveChat();
-  if(V.tab==="chat"&&!$("#chat-msgs")||CH.msgs.length===1)render(true);else paintChat();
+function paintChat(){var m=$("#chat-msgs");if(m){m.innerHTML=bubbles();paintLive();var b=$("#chat-btn");if(b){b.dataset.a=CH.busy?"chatstop":"chatsend";b.textContent=CH.busy?"Detener":"Enviar"}window.scrollTo(0,document.body.scrollHeight)}else render(true)}
+function paintLive(){
+  var l=$("#chat-live");if(!l)return;
+  var d=l.querySelector("details"),wasOpen=d?d.open:true;
+  l.innerHTML=liveHtml();
+  var d2=l.querySelector("details");if(d2&&CH.live&&CH.live.t)d2.open=false;else if(d2)d2.open=wasOpen;
+}
+function gemStream(body,onUpd,ctl){
+  var key=getKey();if(!key)return Promise.reject(Object.assign(new Error("sin clave"),{nokey:true}));
+  var useThink=true,i=0,got=false,idle=null,acc={th:"",t:""},L=null;
+  function arm(){clearTimeout(idle);idle=setTimeout(function(){ctl.timedOut=true;ctl.abort()},got?45000:70000)}
+  function once(){
+    var b=JSON.parse(JSON.stringify(body));if(useThink){b.generationConfig=b.generationConfig||{};b.generationConfig.thinkingConfig={includeThoughts:true}}
+    arm();
+    return fetch("https://generativelanguage.googleapis.com/v1beta/models/"+L[i]+":streamGenerateContent?alt=sse",{method:"POST",headers:{"Content-Type":"application/json","x-goog-api-key":key},body:JSON.stringify(b),signal:ctl.signal}).then(function(r){
+      if(!r.ok)return r.json().catch(function(){return{}}).then(function(j){var e=new Error((j.error&&j.error.message)||("HTTP "+r.status));e.status=r.status;throw e});
+      var rd=r.body.getReader(),dec=new TextDecoder(),buf="";
+      function pump(){return rd.read().then(function(x){
+        if(x.done)return;
+        arm();buf+=dec.decode(x.value,{stream:true});
+        var evs=buf.split(/\r?\n\r?\n/);buf=evs.pop();
+        evs.forEach(function(ev){ev.split(/\r?\n/).forEach(function(line){
+          if(line.indexOf("data:")!==0)return;var s=line.slice(5).trim();if(!s||s==="[DONE]")return;
+          var j;try{j=JSON.parse(s)}catch(e){return}
+          if(j.error){var e2=new Error(j.error.message||"error");e2.status=j.error.code||500;throw e2}
+          var c=j.candidates&&j.candidates[0],ps=(c&&c.content&&c.content.parts)||[];
+          ps.forEach(function(p){if(!p.text)return;got=true;if(p.thought)acc.th+=p.text;else acc.t+=p.text});
+        })});
+        onUpd(acc);return pump()})}
+      return pump();
+    }).catch(function(e){
+      if(ctl.timedOut&&!e.status){var te=new Error("timeout");te.timeout=true;throw te}
+      if(!got&&e.status===400&&useThink&&/think/i.test(e.message||"")){useThink=false;return once()}
+      if(!got&&i<L.length-1&&(e.status===404||e.status===429||e.status===503)){i++;return once()}
+      throw e;
+    });
+  }
+  return modelList(key).then(function(l){L=l;return once()}).then(function(){clearTimeout(idle);return acc},function(e){
+    clearTimeout(idle);
+    if(ctl.userStop||(e&&e.timeout))return acc;   // devuelve lo que alcanzó a llegar
+    throw e;
+  }).then(function(r){r.timedOut=!!ctl.timedOut;r.stopped=!!ctl.userStop;return r});
+}
+function chatSend(text,retry){
+  loadChat();
+  if(CH.busy)return;
+  if(!retry){text=String(text||"").trim();if(!text)return;CH.msgs.push({r:"u",t:text.slice(0,1500)})}
+  else if(!CH.msgs.length||CH.msgs[CH.msgs.length-1].r!=="u")return;
+  CH.err=null;CH.busy=true;CH.live={th:"",t:""};CH.t0=Date.now();CH.ctl=new AbortController();saveChat();
   var inp=$("#chat-in");if(inp)inp.value="";
+  if(!$("#chat-live"))render(true);else paintChat();
+  if(CH.tick)clearInterval(CH.tick);CH.tick=setInterval(function(){if(!CH.busy){clearInterval(CH.tick);return}if(!CH.live.t)paintLive()},1000);
   window.scrollTo(0,document.body.scrollHeight);
-  var hist=CH.msgs.slice(-14).map(function(m){return{role:m.r==="u"?"user":"model",parts:[{text:m.t}]}});
-  gemGen({systemInstruction:{parts:[{text:SYS+ctxText()}]},contents:hist,generationConfig:{temperature:0.6}}).then(function(tx){
-    CH.msgs.push({r:"m",t:tx.trim()});CH.busy=false;saveChat();paintChat();
-  },function(e){CH.busy=false;CH.err=gemErr(e);paintChat()});
+  var hist=CH.msgs.slice(-10).map(function(m){return{role:m.r==="u"?"user":"model",parts:[{text:m.t}]}});
+  var ctl=CH.ctl;
+  gemStream({systemInstruction:{parts:[{text:SYS+ctxText()}]},contents:hist,generationConfig:{temperature:0.6}},function(acc){CH.live={th:acc.th,t:acc.t};if(V.tab==="chat")paintLive();window.scrollTo(0,document.body.scrollHeight)},ctl).then(function(r){
+    CH.busy=false;clearInterval(CH.tick);
+    var txt=(r.t||"").trim();
+    if(!txt){CH.err=r.stopped?"Detuviste la respuesta antes de que llegara texto.":r.timedOut?"Gemini tardó demasiado en responder. Probá de nuevo.":"Gemini no devolvió una respuesta. Probá de nuevo.";}
+    else{CH.msgs.push({r:"m",t:txt+(r.timedOut?"\n\n(La respuesta se cortó porque Gemini tardó demasiado.)":r.stopped?"\n\n(Respuesta detenida.)":""),th:(r.th||"").slice(0,4000)})}
+    saveChat();if(V.tab==="chat")paintChat();
+  },function(e){CH.busy=false;clearInterval(CH.tick);CH.err=gemErr(e);if(V.tab==="chat")paintChat()});
 }
 
 /* ---------- foto de la comida (Gemini) ---------- */
@@ -1077,6 +1140,8 @@ document.addEventListener("click",function(e){
     case"useplan":{var pr=planCalc();if(pr.goal){S.goal=pr.goal;persist();render(true);toast("Meta diaria: "+fmt(pr.goal)+" kcal")}break}
     case"impgo":importRecipe();break;
     case"chatsend":{var ci=$("#chat-in");chatSend(ci?ci.value:"");break}
+    case"chatstop":if(CH.ctl){CH.ctl.userStop=true;CH.ctl.abort()}break;
+    case"chatretry":chatSend(null,true);break;
     case"chatchip":chatSend(CHIPS[+el.dataset.i]);break;
     case"chatclear":if(!confirmTap(el))break;CH.msgs=[];CH.err=null;saveChat();render(true);break;
     case"scan":startScan();break;

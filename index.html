@@ -6,6 +6,8 @@
 <title>Calorías y Peso</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-title" content="Calorías y Peso">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F2F4F0">
@@ -265,7 +267,7 @@ function hue(s){var n=0;for(var i=0;i<s.length;i++)n+=s.charCodeAt(i);return n%1
 
 /* ---------- guardado ---------- */
 function loadLocal(){try{var r=localStorage.getItem(LS);if(r)return JSON.parse(r)}catch(e){}return null}
-function persist(){try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){toast("No se pudo guardar en este navegador")}}
+function persist(){try{localStorage.setItem(LS,JSON.stringify(S))}catch(e){toast("No se pudo guardar en este navegador")}try{remSync()}catch(e){}}
 function merge(src){var d=defaults();for(var k in src)d[k]=src[k];d.plan=Object.assign({},defaults().plan,src.plan||{});return d}
 
 /* ---------- macros ---------- */
@@ -425,6 +427,19 @@ function productByCode(code){
     }).then(function(j){return j&&j.status===1&&j.product?normalize(j.product,tries[k]):go(k+1)});
   }
   return go(0);
+}
+/* base compartida de productos (Supabase) */
+function prodItem(o){return{code:o.codigo,name:o.nombre,brand:o.marca||"",img:o.img||"",kcal:+o.kcal,k100:o.kcal_100g==null?null:+o.kcal_100g,p:o.proteinas==null?null:+o.proteinas,c:o.carbohidratos==null?null:+o.carbohidratos,f:o.grasas==null?null:+o.grasas,serving:o.porcion||"",basis:o.base==="100g"?"100g":"serving",shared:true}}
+function prodRow(it,fuente){function n(x){var v=num(x);return v==null?null:Math.round(v*10)/10}return{codigo:String(it.code),nombre:String(it.name||"").trim().slice(0,150),marca:String(it.brand||"").slice(0,100),kcal:n(it.kcal),kcal_100g:n(it.k100),proteinas:n(it.p),carbohidratos:n(it.c),grasas:n(it.f),base:it.basis==="100g"?"100g":"porcion",porcion:String(it.serving||"").slice(0,60),img:/^https:\/\//.test(it.img||"")?it.img:"",fuente:fuente}}
+function sbProduct(code){
+  if(!backend())return Promise.resolve(null);
+  var cs=[code];if(code.length===12)cs.push("0"+code);if(code.length===13&&code.charAt(0)==="0")cs.push(code.slice(1));
+  return fetch(backend()+"/rest/v1/productos?select=*&codigo=in.("+cs.join(",")+")&limit=1",{headers:sbH(),cache:"no-store"}).then(function(r){return r.ok?r.json():[]}).then(function(a){return a&&a[0]?prodItem(a[0]):null}).catch(function(){return null});
+}
+function sbSaveProduct(it,fuente,overwrite){
+  if(!backend()||!/^\d{8,14}$/.test(String(it.code||""))||!it.name)return;
+  var row=prodRow(it,fuente);if(row.kcal==null||row.kcal<0||row.kcal>5000)return;
+  fetch(backend()+"/rest/v1/productos?on_conflict=codigo",{method:"POST",headers:sbH({Prefer:(overwrite?"resolution=merge-duplicates":"resolution=ignore-duplicates")+",return=minimal"}),body:JSON.stringify(row)}).catch(function(){});
 }
 
 /* ---------- gráficos ---------- */
@@ -611,10 +626,60 @@ function viewPlan(){
    '<div><label class="l" for="p-act">Actividad física</label><select id="p-act" class="field" style="max-width:none;text-align:left">'+ACTS.map(function(a){return'<option value="'+a[0]+'"'+(String(p.act)===a[0]?" selected":"")+">"+a[1]+"</option>"}).join("")+"</select></div>"+
    '<div id="plan-out" class="set">'+planOut()+'</div><p class="sub" style="margin:0">Es una estimación orientativa para adultos sanos, no un consejo médico. Si tenés alguna condición de salud, consultá con un profesional antes de cambiar tu alimentación.</p></div></section>';
 }
+/* ---------- recordatorios (notificaciones) ---------- */
+function remCfg(){S.rem=S.rem||{on:false,hp:"09:00",hc:"21:00",ep:""};return S.rem}
+function isStandalone(){return(window.matchMedia&&matchMedia("(display-mode: standalone)").matches)||navigator.standalone===true}
+function isIOS(){return/iP(hone|ad|od)/.test(navigator.userAgent)||(navigator.platform==="MacIntel"&&navigator.maxTouchPoints>1)}
+function pushOk(){return"serviceWorker"in navigator&&"PushManager"in window&&"Notification"in window}
+function fnApp(body){return fetch(backend()+"/functions/v1/app",{method:"POST",headers:sbH(),body:JSON.stringify(body)}).then(function(r){return r.json()})}
+function lastDates(){var w=S.weights.length?S.weights.map(function(x){return x.d}).sort().pop():"";var c=Object.keys(S.cal).filter(function(k){return S.cal[k]&&S.cal[k].length}).sort().pop()||"";return{ultimo_peso:w,ultima_comida:c}}
+function tzName(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone||"America/Argentina/Buenos_Aires"}catch(e){return"America/Argentina/Buenos_Aires"}}
+function b64u(s){var p="=".repeat((4-s.length%4)%4),b=atob((s+p).replace(/-/g,"+").replace(/_/g,"/")),a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a}
+var swReg=null;
+function regSW(){if(!("serviceWorker"in navigator))return Promise.resolve(null);if(swReg)return Promise.resolve(swReg);return navigator.serviceWorker.register("sw.js").then(function(r){swReg=r;return r}).catch(function(){return null})}
+function remOn(){
+  var R=remCfg();
+  if(!backend()){toast("Los recordatorios no están disponibles en esta versión");return}
+  if(!pushOk()){toast(isIOS()&&!isStandalone()?"Primero agregá la app a la pantalla de inicio y abrila desde ahí":"Este navegador no permite notificaciones");return}
+  Notification.requestPermission().then(function(p){
+    if(p!=="granted")throw Object.assign(new Error("perm"),{perm:true});
+    return Promise.all([regSW().then(function(r){return r||navigator.serviceWorker.ready}),fnApp({accion:"clave"})]);
+  }).then(function(x){
+    var reg=x[0],j=x[1];if(!j||!j.ok||!j.clave)throw new Error("clave");
+    return reg.pushManager.getSubscription().then(function(s){return s||reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(j.clave)})});
+  }).then(function(sub){
+    var d=lastDates();
+    return fnApp({accion:"suscribir",sub:sub.toJSON(),tz:tzName(),hora_peso:R.hp,hora_comida:R.hc,ultimo_peso:d.ultimo_peso,ultima_comida:d.ultima_comida}).then(function(j){if(!j||!j.ok)throw new Error("sub");R.on=true;R.ep=sub.endpoint;persist();render(true);toast("Recordatorios activados")});
+  }).catch(function(e){toast(e&&e.perm?"No diste permiso para notificaciones. Podés habilitarlo en los ajustes del iPhone.":"No se pudieron activar los recordatorios. Probá de nuevo.")});
+}
+function remOff(){
+  var R=remCfg(),ep=R.ep;R.on=false;R.ep="";persist();render(true);toast("Recordatorios desactivados");
+  if(ep&&backend())fnApp({accion:"baja",endpoint:ep}).catch(function(){});
+  regSW().then(function(r){return r&&r.pushManager.getSubscription()}).then(function(s){if(s)s.unsubscribe()}).catch(function(){});
+}
+var remT=null,remLast="";
+function remSync(force){
+  var R=remCfg();if(!R.on||!R.ep||!backend())return;
+  clearTimeout(remT);remT=setTimeout(function(){
+    var d=lastDates(),k=JSON.stringify([d,R.hp,R.hc]);if(!force&&k===remLast)return;remLast=k;
+    fnApp({accion:"estado",endpoint:R.ep,tz:tzName(),hora_peso:R.hp,hora_comida:R.hc,ultimo_peso:d.ultimo_peso,ultima_comida:d.ultima_comida}).then(function(j){if(j&&j.error==="noexiste"){R.on=false;R.ep="";persist()}}).catch(function(){});
+  },1500);
+}
+function viewRem(){
+  var R=remCfg(),note="";
+  if(!backend())return"";
+  if(isIOS()&&!isStandalone())note='<p class="sub" style="margin:0;color:var(--warn)">En iPhone, las notificaciones solo funcionan si agregás la app a la pantalla de inicio (botón Compartir → «Agregar a inicio») y la abrís desde ese ícono.</p>';
+  return'<section><h2>Recordatorios</h2><div class="card set"><p class="sub" style="margin:0">Te avisamos si a esa hora todavía no cargaste tu peso o tus comidas del día.</p>'+note+
+   '<div class="srow"><label for="r-hp">Aviso del peso</label><input id="r-hp" class="field" type="time" value="'+esc(R.hp)+'"></div>'+
+   '<div class="srow"><label for="r-hc">Aviso de comidas</label><input id="r-hc" class="field" type="time" value="'+esc(R.hc)+'"></div>'+
+   (R.on?'<p class="sub" style="margin:0;color:var(--in)">Recordatorios activados en este dispositivo.</p><button class="btn sec small" data-a="remoff">Desactivar recordatorios</button>':'<button class="btn small" data-a="remon">Activar recordatorios</button>')+
+   "</div></section>";
+}
+
 function viewSettings(){
   return head("Ajustes")+'<section style="margin-top:4px"><h2>Objetivos</h2><div class="card set">'+
    '<div class="srow"><label for="s-goal">Meta diaria de calorías</label><input id="s-goal" class="field" inputmode="numeric" value="'+S.goal+'"></div>'+
-   '</div></section>'+viewPlan()+
+   '</div></section>'+viewPlan()+viewRem()+
    '<section><h2>Tus datos</h2><div class="card set"><p class="sub" style="margin:0">Todo se guarda en este navegador. Para que Safari no lo borre por falta de uso, agregá la página a la pantalla de inicio. Hacé una copia de seguridad de vez en cuando.</p>'+
    '<button class="btn sec small" data-a="backup">Descargar copia de seguridad</button>'+
    '<div><label class="l" for="imp">Restaurar copia</label><input id="imp" class="field" type="file" accept=".json,application/json"></div>'+
@@ -632,7 +697,9 @@ function render(keep){
   app.innerHTML=v==="cal"?viewCal():v==="peso"?viewWeight():v==="recetas"?viewRecipes():v==="chat"?viewChat():viewSettings();
   document.querySelectorAll("#chrome .tab").forEach(function(b){if(b.dataset.v===v)b.setAttribute("aria-current","page");else b.removeAttribute("aria-current")});
   if(keep){app.classList.remove("anim");window.scrollTo(0,y)}else animate();
+  if(v==="chat"&&!keep)chatBottom();
 }
+function chatBottom(){function go(){window.scrollTo(0,document.documentElement.scrollHeight)}go();requestAnimationFrame(go);setTimeout(go,80);setTimeout(go,400)}
 function renderRec(){var p=recParts(),c=$("#rec-chips"),l=$("#rec-list");if(c&&l){c.innerHTML=p.chips;l.innerHTML=p.list}else render(true)}
 function animate(){
   var app=$("#app");app.classList.remove("anim");void app.offsetWidth;app.classList.add("anim");
@@ -814,24 +881,27 @@ function shrink(file,max){return new Promise(function(res,rej){
   im.onload=function(){var k=Math.min(1,max/Math.max(im.naturalWidth,im.naturalHeight)),c=document.createElement("canvas");c.width=Math.round(im.naturalWidth*k);c.height=Math.round(im.naturalHeight*k);c.getContext("2d").drawImage(im,0,0,c.width,c.height);URL.revokeObjectURL(url);res(c.toDataURL("image/jpeg",0.72).split(",")[1])};
   im.onerror=function(){URL.revokeObjectURL(url);rej(new Error("img"))};im.src=url})}
 var GPROMPT="Sos un nutricionista argentino. Mirá la foto de esta comida e identificá cada alimento o componente visible (por separado: por ejemplo carne, ensalada, papas). Para cada uno estimá los gramos que hay en el plato y las kcal cada 100 g tal como se ve (cocido, frito, con aderezo, etc.). Usá nombres cortos en español rioplatense. Si hay una bebida, incluila. Distinguí con cuidado entre pollo, pescado (merluza, etc.) y carne: fijate la forma, el color y el empanado; si es un producto empanado o rebozado (medallones, nuggets, milanesas), indicalo en el nombre. Para cada alimento dá también proteínas, carbohidratos y grasas en gramos cada 100 g. Si la imagen no tiene comida, devolvé una lista vacía. No inventes alimentos que no se ven.";
-function gemCall(b64){
+function gemCall(b64,hint){
   var names=foodList().map(function(f){return f.name}).join("; ");
-  var body={contents:[{parts:[{text:GPROMPT+"\n\nSi un alimento coincide con uno de esta lista, usá EXACTAMENTE ese nombre; si no, poné un nombre corto y genérico: "+names},{inline_data:{mime_type:"image/jpeg",data:b64}}]}],generationConfig:{temperature:0.2,responseMimeType:"application/json",responseSchema:{type:"OBJECT",properties:{items:{type:"ARRAY",items:{type:"OBJECT",properties:{nombre:{type:"STRING"},gramos:{type:"NUMBER"},kcal_100g:{type:"NUMBER"},proteina_100g:{type:"NUMBER"},carbos_100g:{type:"NUMBER"},grasa_100g:{type:"NUMBER"}},required:["nombre","gramos","kcal_100g","proteina_100g","carbos_100g","grasa_100g"]}}},required:["items"]}}};
+  var body={contents:[{parts:[{text:GPROMPT+(hint?"\n\nEl usuario aclara qué hay en el plato (tomalo como cierto y usalo para nombrar los alimentos y estimar las porciones): "+hint.slice(0,300):"")+"\n\nSi un alimento coincide con uno de esta lista, usá EXACTAMENTE ese nombre; si no, poné un nombre corto y genérico: "+names},{inline_data:{mime_type:"image/jpeg",data:b64}}]}],generationConfig:{temperature:0.2,responseMimeType:"application/json",responseSchema:{type:"OBJECT",properties:{items:{type:"ARRAY",items:{type:"OBJECT",properties:{nombre:{type:"STRING"},gramos:{type:"NUMBER"},kcal_100g:{type:"NUMBER"},proteina_100g:{type:"NUMBER"},carbos_100g:{type:"NUMBER"},grasa_100g:{type:"NUMBER"}},required:["nombre","gramos","kcal_100g","proteina_100g","carbos_100g","grasa_100g"]}}},required:["items"]}}};
   return gemGen(body,"rapido").then(function(tx){var o=parseJSONLoose(tx);return(o.items||[]).filter(function(x){return x&&x.nombre&&x.gramos>0&&x.kcal_100g>=0}).slice(0,12)});
 }
 function analyzePhoto(file){
   if(!aiOn()){toast(gemErr({nokey:true}));return}
-  A.mode="photoload";A.t0=Date.now();drawAdd();loadDB();
+  A.mode="photoload";A.t0=Date.now();A.b64=null;A.hint="";drawAdd();loadDB();
+  shrink(file,640).then(function(b64){if(!A)return;A.b64=b64;runPhoto(b64,"")}).catch(function(){if(!A)return;A.mode="search";A.photoErr="No se pudo abrir la foto. Probá de nuevo.";drawAdd()});
+}
+function runPhoto(b64,hint){
+  A.mode="photoload";A.t0=Date.now();A.hint=hint||"";drawAdd();
   if(A.tick)clearInterval(A.tick);A.tick=setInterval(function(){var e=$("#ph-t");if(!A||A.mode!=="photoload"||!e){clearInterval(A&&A.tick);return}e.textContent=Math.round((Date.now()-A.t0)/1000)+" s"},500);
-  shrink(file,768).then(function(b64){
-    return gemCall(b64);
-  }).then(function(items){
-    if(!A)return;
+  var tk=A.t0;
+  gemCall(b64,hint).then(function(items){
+    if(!A||A.t0!==tk)return;clearInterval(A.tick);
     if(!items.length){A.mode="search";A.photoErr="No se detectó comida en la foto. Probá con otra más cerca y con buena luz.";drawAdd();return}
-    A.mode="photo";A.rows=items.map(function(x){var r={n:String(x.nombre).slice(0,60),g:Math.round(x.gramos),k:Math.round(x.kcal_100g),p:num(x.proteina_100g)||0,c:num(x.carbos_100g)||0,f:num(x.grasa_100g)||0,from:"ia"};var m=dbMatch(r.n);if(m){r.ia=r.n;r.n=m.name;r.k=m.k;r.p=m.p;r.c=m.c;r.f=m.f;r.from="db"}return r});A.sug={};clearInterval(A.tick);
-    A.meal=defMeal();A.date=V.day;drawAdd();
+    A.mode="photo";A.rows=items.map(function(x){var r={n:String(x.nombre).slice(0,60),g:Math.round(x.gramos),k:Math.round(x.kcal_100g),p:num(x.proteina_100g)||0,c:num(x.carbos_100g)||0,f:num(x.grasa_100g)||0,from:"ia"};var m=dbMatch(r.n);if(m){r.ia=r.n;r.n=m.name;r.k=m.k;r.p=m.p;r.c=m.c;r.f=m.f;r.from="db"}return r});A.sug={};
+    A.meal=A.meal||defMeal();A.date=A.date||V.day;drawAdd();
   }).catch(function(e){
-    if(!A)return;A.mode="search";
+    if(!A||A.t0!==tk)return;clearInterval(A.tick);A.mode="search";
     A.photoErr=gemErr(e);
     drawAdd();
   });
@@ -841,7 +911,9 @@ function photoTotal(){readRows();var s=0,P=0,C=0,F=0;A.rows.forEach(function(x){
 function rowMac(x){return"P "+fmt1(x.p||0)+" · C "+fmt1(x.c||0)+" · G "+fmt1(x.f||0)+" g cada 100 g"}
 function drawPhoto(){
   $("#layer").innerHTML='<div class="scrim still" data-a="scrim"><div class="sheet" role="dialog" aria-modal="true" aria-label="Revisar foto"><div class="sh"><button class="link" data-a="toresults">← Volver</button><button class="ib" data-a="close" aria-label="Cerrar">'+ic("x")+"</button></div>"+
-   '<p class="sub" style="margin:0">Esto es una <b>estimación</b> hecha con IA a partir de la foto. Si se equivocó con un alimento, cambiale el nombre: te sugerimos opciones al escribir, o tocá «Recalcular con IA».</p>'+
+   (A.b64?'<img src="data:image/jpeg;base64,'+A.b64+'" alt="Tu foto" style="width:100%;max-height:200px;object-fit:cover;border-radius:16px">':"")+
+   '<p class="sub" style="margin:0">Esto es una <b>estimación</b> hecha con IA a partir de la foto. Si se equivocó, contale qué hay en el plato y la vuelve a analizar, o cambiá el nombre de un alimento.</p>'+
+   '<div class="searchrow"><input id="ph-hint" class="field" style="text-align:left" maxlength="200" placeholder="Ej: medallones de merluza con puré" aria-label="Qué hay en el plato" value="'+esc(A.hint||"")+'"><button class="btn sec small" data-a="phhint">Reanalizar</button></div>'+
    A.rows.map(function(x,i){return'<div class="card pr" data-i="'+i+'" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><div class="searchrow"><input class="field pr-n" aria-label="Alimento" value="'+esc(x.n)+'"><button class="ib" data-a="prdel" data-i="'+i+'" aria-label="Quitar">'+ic("x")+'</button></div><div class="chips pr-sug" id="sug-'+i+'"></div><div class="searchrow"><label class="sub" style="flex:1">Gramos<input class="field pr-g" inputmode="decimal" value="'+esc(String(x.g).replace(".",","))+'"></label><label class="sub" style="flex:1">kcal cada 100 g<input class="field pr-k" inputmode="decimal" value="'+esc(String(x.k).replace(".",","))+'"></label></div><div class="searchrow" style="align-items:center;justify-content:space-between"><small class="sub">'+rowMac(x)+'<br>'+(x.from==="db"?"Valores de la base de alimentos"+(x.ia&&nrm(x.ia)!==nrm(x.n)?" (la IA dijo: "+esc(x.ia)+")":""):x.from==="ia2"?"Valores estimados por IA":"Valores estimados por IA")+'</small><button class="btn sec small" data-a="prai" data-i="'+i+'">Recalcular con IA</button></div></div>'}).join("")+
    '<div class="total"><span>Total</span><b class="num" id="p_total">0 kcal</b></div><div class="sub" id="p_macros" style="margin-top:-8px;text-align:right"></div>'+
    '<div><label class="l">Comida</label><div class="chips" id="d_meals">'+MEALS.map(function(m){return'<button class="chip" data-a="meal" data-m="'+m+'" aria-pressed="'+(A.meal===m)+'">'+m+"</button>"}).join("")+"</div></div>"+
@@ -955,11 +1027,11 @@ function drawAdd(focus){
   if(A.mode==="detail")return drawDetail();
   if(A.mode==="photo")return drawPhoto();
   if(A.mode==="dbform")return drawFoodForm();
-  if(A.mode==="photoload"){$("#layer").innerHTML='<div class="scrim still"><div class="sheet" role="dialog" aria-label="Analizando foto"><div class="empty" style="padding:40px 10px"><b>Analizando la foto…</b>Esto tarda unos segundos. <span id="ph-t" class="num">0 s</span></div><button class="btn sec" data-a="close">Cancelar</button></div></div>';return}
+  if(A.mode==="photoload"){$("#layer").innerHTML='<div class="scrim still"><div class="sheet" role="dialog" aria-label="Analizando foto"><div class="empty" style="padding:40px 10px"><b>Analizando la foto…</b>'+(A.hint?"Con tu aclaración: "+esc(A.hint)+". ":"")+'Esto tarda unos segundos. <span id="ph-t" class="num">0 s</span></div><button class="btn sec" data-a="close">Cancelar</button></div></div>';return}
   $("#layer").innerHTML='<div class="scrim'+(A.drawn?" still":"")+'" data-a="scrim"><div class="sheet" role="dialog" aria-modal="true" aria-label="Agregar alimento"><div class="sh"><h3>Agregar alimento</h3><button class="ib" data-a="close" aria-label="Cerrar">'+ic("x")+"</button></div>"+
    '<div class="searchrow"><input id="a-q" class="field" type="search" enterkeyhint="search" placeholder="Alimento, producto o código de barras" aria-label="Buscar alimento" value="'+esc(A.q)+'"><button class="btn small" data-a="dosearch">Buscar</button></div>'+
-   '<div class="searchrow"><button class="btn sec" data-a="scan" style="flex:1">Escanear código</button><button class="btn sec" data-a="mealphoto" style="flex:1">Foto de la comida</button></div><input id="meal-photo" type="file" accept="image/*" hidden>'+(A.photoErr?'<p class="sub" style="margin:0;color:var(--out)">'+esc(A.photoErr)+"</p>":"")+(A.keyPrompt?'<div class="card" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><p class="sub" style="margin:0">Para analizar fotos necesitás una clave gratuita de Gemini. Entrá a <b>aistudio.google.com/apikey</b>, creá una clave y pegala acá. Queda guardada solo en este celu.</p><div class="searchrow"><input id="gkey" class="field" type="password" autocomplete="off" placeholder="Clave de Gemini" aria-label="Clave de Gemini"><button class="btn small" data-a="savekey">Guardar</button></div></div>':"")+'<div id="a-res" class="card" style="padding:4px 16px">'+resultsHtml()+"</div>"+
-   '<div class="searchrow" style="justify-content:center;gap:18px"><button class="link" data-a="manual">Cargar a mano</button>'+(dbUrl()?'<button class="link" data-a="dbnew">Agregar a la base</button>':"")+"</div></div></div>";
+   '<div class="searchrow"><button class="btn sec" data-a="scan" style="flex:1">Escanear código</button><button class="btn sec" data-a="mealphoto" style="flex:1">Foto de la comida</button></div><input id="meal-photo" type="file" accept="image/*" capture="environment" hidden><input id="meal-photo2" type="file" accept="image/*" hidden>'+(A.photoErr?'<p class="sub" style="margin:0;color:var(--out)">'+esc(A.photoErr)+"</p>":"")+(A.keyPrompt?'<div class="card" style="padding:12px 16px;display:flex;flex-direction:column;gap:8px"><p class="sub" style="margin:0">Para analizar fotos necesitás una clave gratuita de Gemini. Entrá a <b>aistudio.google.com/apikey</b>, creá una clave y pegala acá. Queda guardada solo en este celu.</p><div class="searchrow"><input id="gkey" class="field" type="password" autocomplete="off" placeholder="Clave de Gemini" aria-label="Clave de Gemini"><button class="btn small" data-a="savekey">Guardar</button></div></div>':"")+'<div id="a-res" class="card" style="padding:4px 16px">'+resultsHtml()+"</div>"+
+   '<div class="searchrow" style="justify-content:center;gap:18px"><button class="link" data-a="manual">Cargar a mano</button>'+(aiOn()?'<button class="link" data-a="mealgal">Foto de la galería</button>':"")+(dbUrl()?'<button class="link" data-a="dbnew">Agregar a la base</button>':"")+"</div></div></div>";
   A.drawn=true;
   if(focus)setTimeout(function(){var e=$("#a-q");if(e)e.focus()},60);
 }
@@ -977,9 +1049,14 @@ function lookup(code){
   var tk=++searchToken;A.q=code;A.byCode=true;A.gen=null;A.loading=true;A.error=null;A.notFoundCode=null;A.searched=true;
   if(S.local&&S.local[code]){A.loading=false;toast("Producto que guardaste antes");openDetail(Object.assign({},S.local[code]));return}
   if($("#a-q")){$("#a-q").value=code;updateResults()}
-  productByCode(code).then(function(it){
-    if(tk!==searchToken||!A)return;A.loading=false;
-    if(!it){A.notFoundCode=code;A.error="No encontramos el código "+code+" en Open Food Facts. Probá buscarlo por nombre o cargalo a mano: la próxima vez que lo escanees va a aparecer solo.";updateResults();return}
+  sbProduct(code).then(function(sh){
+    if(tk!==searchToken||!A)return null;
+    if(sh){A.loading=false;toast("Producto de la base compartida");openDetail(sh);return"done"}
+    return productByCode(code);
+  }).then(function(it){
+    if(it==="done"||tk!==searchToken||!A)return;A.loading=false;
+    if(it&&it.kcal!=null)sbSaveProduct(it,"off",false);
+    if(!it){A.notFoundCode=code;A.error="No encontramos el código "+code+". Cargalo a mano con los datos de la etiqueta y queda guardado para todos los que usan la app: la próxima vez aparece solo.";updateResults();return}
     if(it.kcal==null){toast("Ese producto no tiene calorías cargadas. Ingresalas vos.");openDetail({custom:true,name:it.name,brand:it.brand,code:it.code,img:it.img,kcal:"",serving:""});return}
     openDetail(it);
   },function(){if(tk!==searchToken||!A)return;A.loading=false;A.error="No pudimos conectar con Open Food Facts. Revisá tu conexión e intentá de nuevo.";updateResults()});
@@ -1052,6 +1129,7 @@ function addFood(){
   var basis=g?"100g":(it.basis||"serving");
   var ri={code:it.code||"",name:name,brand:it.brand||"",img:it.img||"",kcal:rec.kcal,k100:it.k100==null?null:it.k100,serving:serv||(basis==="100g"?"100 g":""),basis:basis,generic:!!it.generic,p:rec.p==null?null:rec.p,c:rec.c==null?null:rec.c,f:rec.f==null?null:rec.f};
   S.recent=[ri].concat(S.recent.filter(function(x){return!(ri.code&&x.code===ri.code)&&x.name!==ri.name})).slice(0,12);
+  if(it.code&&(it.custom||it.edited))sbSaveProduct(Object.assign({},it,{name:name,kcal:rec.kcal,p:rec.p,c:rec.c,f:rec.f,serving:serv,basis:basis}),"app",true);
   if(it.custom&&it.code){S.local=S.local||{};S.local[it.code]={code:it.code,name:name,brand:it.brand||"",img:"",kcal:rec.kcal,k100:null,serving:ri.serving,basis:basis,p:ri.p,c:ri.c,f:ri.f}}
   V.day=date;V.tab="cal";persist();var edit=!!A.editId;closeSheet();render(true);window.scrollTo(0,0);toast(edit?"Cambios guardados":"Alimento agregado");
 }
@@ -1188,7 +1266,7 @@ document.addEventListener("click",function(e){
   var a=el.dataset.a,v=el.dataset.v,id=el.dataset.id;
   if(a==="scrim"){if(e.target===el&&!W&&(!A||A.mode!=="detail"))closeSheet();return}
   switch(a){
-    case"tab":V.tab=v;V.rec=null;render();window.scrollTo(0,0);break;
+    case"tab":V.tab=v;V.rec=null;if(v!=="chat")window.scrollTo(0,0);render();break;
     case"new":openAdd();break;
     case"newW":openW();break;
     case"newR":V.rec="new";V.draft=null;render();window.scrollTo(0,0);break;
@@ -1221,6 +1299,10 @@ document.addEventListener("click",function(e){
     case"chatchip":chatSend(CHIPS[+el.dataset.i]);break;
     case"chatclear":if(!confirmTap(el))break;CH.msgs=[];CH.err=null;saveChat();render(true);break;
     case"scan":startScan();break;
+    case"mealgal":A.photoErr=null;if(!aiOn()){toast(gemErr({nokey:true}));break}{var mg=$("#meal-photo2");if(mg)mg.click()}break;
+    case"phhint":{var hv=($("#ph-hint")||{}).value||"";hv=hv.trim();if(!hv){toast("Escribí qué hay en el plato");break}if(A&&A.b64)runPhoto(A.b64,hv);break}
+    case"remon":remOn();break;
+    case"remoff":remOff();break;
     case"mealphoto":A.photoErr=null;if(!aiOn()){toast(gemErr({nokey:true}));break}{var mp=$("#meal-photo");if(mp)mp.click()}break;
     case"prdel":readRows();A.rows.splice(+el.dataset.i,1);if(!A.rows.length){A.mode="search";drawAdd()}else drawPhoto();break;
     case"photoadd":addPhoto();break;
@@ -1276,6 +1358,7 @@ document.addEventListener("input",function(e){
   if(e.target.classList&&(e.target.classList.contains("pr-g")||e.target.classList.contains("pr-k"))&&A&&A.rows)photoTotal();
 });
 document.addEventListener("keydown",function(e){
+  if(e.key==="Enter"&&e.target.id==="ph-hint"){e.preventDefault();var hb=document.querySelector('[data-a="phhint"]');if(hb)hb.click();return}
   if(e.key==="Enter"){
     if(e.target.id==="a-q"){e.preventDefault();doSearch()}
     if(e.target.id==="chat-in"){e.preventDefault();var cb=document.querySelector('[data-a="chatsend"]');if(cb)cb.click()}
@@ -1286,8 +1369,9 @@ document.addEventListener("change",function(e){
   var t=e.target;
   if(t.id==="w_date"&&W){readW();var ex=S.weights.filter(function(x){return x.d===W.date})[0];if(ex)W.amount=String(ex.kg).replace(".",",");W.confirm=false;drawW()}
   if(t.id==="scan-photo"&&t.files&&t.files[0]){decodePhoto(t.files[0]);t.value=""}
-  if(t.id==="meal-photo"&&t.files&&t.files[0]&&A){var pf=t.files[0];t.value="";analyzePhoto(pf)}
+  if((t.id==="meal-photo"||t.id==="meal-photo2")&&t.files&&t.files[0]&&A){var pf=t.files[0];t.value="";analyzePhoto(pf)}
   if(t.id==="p-act"||t.id==="p-date"){readPlan();persist();var po=$("#plan-out");if(po)po.innerHTML=planOut()}
+  if(t.id==="r-hp"||t.id==="r-hc"){var R0=remCfg(),hv2=/^\d{2}:\d{2}$/.test(t.value)?t.value:"";if(!hv2){t.value=t.id==="r-hp"?R0.hp:R0.hc;return}if(t.id==="r-hp")R0.hp=hv2;else R0.hc=hv2;persist();remSync(true);toast("Horario guardado")}
   if(t.id==="s-goal"){var g=parseInt(String(t.value).replace(/\./g,""),10);if(g>=500&&g<=10000){S.goal=g;persist();toast("Meta actualizada")}else{t.value=S.goal;toast("Ingresá una meta entre 500 y 10.000 kcal")}}
   if(t.id==="s-target"){var v=num(t.value);S.target=v!=null&&v>=20&&v<=400?Math.round(v*10)/10:null;persist();toast(S.target?"Objetivo guardado":"Objetivo quitado")}
   if(t.id==="imp"&&t.files&&t.files[0]){
@@ -1300,6 +1384,7 @@ document.addEventListener("change",function(e){
 /* ---------- arranque ---------- */
 var local=loadLocal();if(local)S=merge(local);
 drawNav();render();setTimeout(loadDB,300);
+regSW();setTimeout(function(){remSync(true)},2000);
 try{if(navigator.storage&&navigator.storage.persist)navigator.storage.persist()}catch(e){}
 })();
 </script>

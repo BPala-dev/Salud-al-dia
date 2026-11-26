@@ -637,20 +637,43 @@ function tzName(){try{return Intl.DateTimeFormat().resolvedOptions().timeZone||"
 function b64u(s){var p="=".repeat((4-s.length%4)%4),b=atob((s+p).replace(/-/g,"+").replace(/_/g,"/")),a=new Uint8Array(b.length);for(var i=0;i<b.length;i++)a[i]=b.charCodeAt(i);return a}
 var swReg=null;
 function regSW(){if(!("serviceWorker"in navigator))return Promise.resolve(null);if(swReg)return Promise.resolve(swReg);return navigator.serviceWorker.register("sw.js").then(function(r){swReg=r;return r}).catch(function(){return null})}
+function remErr(paso,e){var m=String((e&&(e.mensaje||e.message||e.name))||"").slice(0,160);var x=new Error(m);x.paso=paso;return x}
+function fnAppStep(paso,body){
+  return fetch(backend()+"/functions/v1/app",{method:"POST",headers:sbH(),body:JSON.stringify(body)}).then(function(r){
+    return r.text().then(function(tx){var j=null;try{j=JSON.parse(tx)}catch(_){}
+      if(!r.ok)throw remErr(paso,{message:"HTTP "+r.status+(r.status===401?" (desactivá «Verify JWT» en la función app)":r.status===404?" (no existe la función app)":"")+(j&&(j.message||j.msg)?": "+(j.message||j.msg):"")});
+      if(!j||!j.ok)throw remErr(paso,{message:(j&&(j.error||"")+(j.mensaje?": "+j.mensaje:""))||"respuesta inválida"});
+      return j})},function(e){throw remErr(paso,{message:"sin conexión con la función app"})});
+}
+function withTimeout(p,ms,paso){return Promise.race([p,new Promise(function(_,rej){setTimeout(function(){rej(remErr(paso,{message:"tardó demasiado"}))},ms)})])}
 function remOn(){
   var R=remCfg();
   if(!backend()){toast("Los recordatorios no están disponibles en esta versión");return}
   if(!pushOk()){toast(isIOS()&&!isStandalone()?"Primero agregá la app a la pantalla de inicio y abrila desde ahí":"Este navegador no permite notificaciones");return}
+  var st=$("#rem-st");function show(m,bad){if(st){st.textContent=m;st.style.color=bad?"var(--out)":"var(--mute)"}}
+  show("Pidiendo permiso…");
   Notification.requestPermission().then(function(p){
     if(p!=="granted")throw Object.assign(new Error("perm"),{perm:true});
-    return Promise.all([regSW().then(function(r){return r||navigator.serviceWorker.ready}),fnApp({accion:"clave"})]);
-  }).then(function(x){
-    var reg=x[0],j=x[1];if(!j||!j.ok||!j.clave)throw new Error("clave");
-    return reg.pushManager.getSubscription().then(function(s){return s||reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(j.clave)})});
+    show("Preparando el servicio de notificaciones…");
+    return withTimeout(regSW().then(function(){return navigator.serviceWorker.ready}),15000,"servicio de notificaciones (sw.js)").catch(function(e){throw e.paso?e:remErr("servicio de notificaciones (sw.js)",e)});
+  }).then(function(reg){
+    show("Conectando con el servidor…");
+    return fnAppStep("servidor (clave)",{accion:"clave"}).then(function(j){
+      if(!j.clave)throw remErr("servidor (clave)",{message:"sin clave"});
+      show("Registrando este dispositivo…");
+      return reg.pushManager.getSubscription().then(function(s){
+        if(s){var k=s.options&&s.options.applicationServerKey;if(k){var a=new Uint8Array(k),b=b64u(j.clave);if(a.length!==b.length||a.some(function(v,i){return v!==b[i]}))return s.unsubscribe().then(function(){return null})}}
+        return s;
+      }).then(function(s){return s||reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64u(j.clave)})}).catch(function(e){throw e.paso?e:remErr("suscripción del dispositivo",e)});
+    });
   }).then(function(sub){
     var d=lastDates();
-    return fnApp({accion:"suscribir",sub:sub.toJSON(),tz:tzName(),hora_peso:R.hp,hora_comida:R.hc,ultimo_peso:d.ultimo_peso,ultima_comida:d.ultima_comida}).then(function(j){if(!j||!j.ok)throw new Error("sub");R.on=true;R.ep=sub.endpoint;persist();render(true);toast("Recordatorios activados")});
-  }).catch(function(e){toast(e&&e.perm?"No diste permiso para notificaciones. Podés habilitarlo en los ajustes del iPhone.":"No se pudieron activar los recordatorios. Probá de nuevo.")});
+    return fnAppStep("servidor (guardar)",{accion:"suscribir",sub:sub.toJSON(),tz:tzName(),hora_peso:R.hp,hora_comida:R.hc,ultimo_peso:d.ultimo_peso,ultima_comida:d.ultima_comida}).then(function(){R.on=true;R.ep=sub.endpoint;persist();render(true);toast("Recordatorios activados")});
+  }).catch(function(e){
+    if(e&&e.perm){show("No diste permiso. Habilitalo en Ajustes del iPhone → Notificaciones → Calorías y Peso.",true);toast("No diste permiso para notificaciones");return}
+    show("No se pudo activar. Paso: "+((e&&e.paso)||"desconocido")+(e&&e.message?" · "+e.message:""),true);
+    toast("No se pudieron activar los recordatorios");
+  });
 }
 function remOff(){
   var R=remCfg(),ep=R.ep;R.on=false;R.ep="";persist();render(true);toast("Recordatorios desactivados");
@@ -672,7 +695,7 @@ function viewRem(){
   return'<section><h2>Recordatorios</h2><div class="card set"><p class="sub" style="margin:0">Te avisamos si a esa hora todavía no cargaste tu peso o tus comidas del día.</p>'+note+
    '<div class="srow"><label for="r-hp">Aviso del peso</label><input id="r-hp" class="field" type="time" value="'+esc(R.hp)+'"></div>'+
    '<div class="srow"><label for="r-hc">Aviso de comidas</label><input id="r-hc" class="field" type="time" value="'+esc(R.hc)+'"></div>'+
-   (R.on?'<p class="sub" style="margin:0;color:var(--in)">Recordatorios activados en este dispositivo.</p><button class="btn sec small" data-a="remoff">Desactivar recordatorios</button>':'<button class="btn small" data-a="remon">Activar recordatorios</button>')+
+   '<p class="sub" id="rem-st" style="margin:0"></p>'+(R.on?'<p class="sub" style="margin:0;color:var(--in)">Recordatorios activados en este dispositivo.</p><button class="btn sec small" data-a="remoff">Desactivar recordatorios</button>':'<button class="btn small" data-a="remon">Activar recordatorios</button>')+
    "</div></section>";
 }
 
